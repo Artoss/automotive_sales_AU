@@ -23,25 +23,30 @@ def app_config(tmp_path) -> AppConfig:
 
 @pytest.fixture
 def sample_marklines_html() -> str:
-    """Minimal Marklines-style HTML with tables and chart data."""
+    """Minimal Marklines-style HTML mimicking real Marklines table structure."""
     return """
     <html>
     <body>
     <h1>Automotive Sales in Australia by Month</h1>
 
-    <!-- Header table (index 0) -->
+    <!-- Summary table (even index) -->
     <table>
-        <tr><th>Summary</th><th>2024</th></tr>
-        <tr><td>Total</td><td>1000000</td></tr>
+        <tr><th>Type</th><th>Jan. 2024</th><th>Jan. 2023</th></tr>
+        <tr><td>Passenger Cars</td><td>50000</td><td>48000</td></tr>
     </table>
 
-    <!-- Data table (index 1) -->
+    <!-- Data table with Maker/Brand (odd index) -->
     <table>
-        <tr><th>Make</th><th>Jan</th><th>Feb</th><th>Mar</th></tr>
-        <tr><td>Toyota</td><td>15000</td><td>14500</td><td>16000</td></tr>
-        <tr><td>Mazda</td><td>8000</td><td>7500</td><td>8200</td></tr>
-        <tr><td>Hyundai</td><td>6000</td><td>5800</td><td>6300</td></tr>
-        <tr><td>Total</td><td>29000</td><td>27800</td><td>30500</td></tr>
+        <thead>
+            <tr><th>-</th><th>Maker/Brand</th><th colspan="2">2024</th><th colspan="2">2023</th></tr>
+            <tr><th>-</th><th>Maker/Brand</th><th>Jan.</th><th>Share</th><th>Jan.</th><th>Share</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>1</td><td>Toyota</td><td>15000</td><td>20.5%</td><td>14000</td><td>19.8%</td></tr>
+            <tr><td>2</td><td>Mazda</td><td>8000</td><td>10.9%</td><td>7500</td><td>10.6%</td></tr>
+            <tr><td>3</td><td>Hyundai</td><td>6000</td><td>8.2%</td><td>5800</td><td>8.2%</td></tr>
+            <tr><td></td><td>Total</td><td>29000</td><td></td><td>27300</td><td></td></tr>
+        </tbody>
     </table>
 
     <script>

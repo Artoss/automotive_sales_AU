@@ -7,7 +7,8 @@ run_mode: "full"
 marklines:
   base_url: "https://www.marklines.com/en/statistics/flash_sales/automotive-sales-in-australia-by-month"
   historical_url_template: "https://www.marklines.com/en/statistics/flash_sales/salesfig_australia_{year}"
-  years: [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
+  # Years 2021+ are covered by the main page; historical pages exist for 2020 and older
+  years: [2020, 2019, 2018]
   use_browser_fallback: false
 
 # FCAI scope

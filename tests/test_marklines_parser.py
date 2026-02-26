@@ -5,9 +5,35 @@ Tests for the Marklines HTML/JS parser.
 from __future__ import annotations
 
 from motor_vehicles.scraping.marklines_parser import (
+    _parse_column_header,
     parse_chart_data,
     parse_tables,
 )
+
+
+class TestParseColumnHeader:
+    """Tests for column header parsing."""
+
+    def test_tuple_month_year(self):
+        assert _parse_column_header(("2019", "Dec.")) == (2019, 12)
+
+    def test_tuple_filters_share(self):
+        assert _parse_column_header(("2019", "Share")) == (None, None)
+
+    def test_tuple_filters_yoy(self):
+        assert _parse_column_header(("Y-o-Y", "Y-o-Y")) == (None, None)
+
+    def test_tuple_filters_ytd_range(self):
+        assert _parse_column_header(("2019", "Jan.-Dec.")) == (None, None)
+
+    def test_tuple_filters_partial_ytd(self):
+        assert _parse_column_header(("2019", "Jan.-May")) == (None, None)
+
+    def test_flat_string_month_year(self):
+        assert _parse_column_header("Jan. 2019") == (2019, 1)
+
+    def test_flat_string_filters_ytd(self):
+        assert _parse_column_header("Jan.-May  2019") == (None, None)
 
 
 class TestParseTables:
@@ -15,19 +41,11 @@ class TestParseTables:
 
     def test_extracts_sales_from_data_table(self, sample_marklines_html):
         records = parse_tables(sample_marklines_html, source_url="test")
-        # Should extract Toyota, Mazda, Hyundai (skip Total) x 3 months
         makes = {r["make"] for r in records}
         assert "Toyota" in makes
         assert "Mazda" in makes
         assert "Hyundai" in makes
         assert "Total" not in makes
-
-    def test_extracts_month_numbers(self, sample_marklines_html):
-        records = parse_tables(sample_marklines_html, source_url="test")
-        months = {r["month"] for r in records}
-        assert 1 in months  # Jan
-        assert 2 in months  # Feb
-        assert 3 in months  # Mar
 
     def test_extracts_units_sold(self, sample_marklines_html):
         records = parse_tables(sample_marklines_html, source_url="test")
