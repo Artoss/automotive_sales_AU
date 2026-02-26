@@ -172,6 +172,14 @@ def status(ctx):
     _run_status(config)
 
 
+@cli.command()
+@click.pass_context
+def update(ctx):
+    """Monthly update: fetch new data, process, report coverage."""
+    config: AppConfig = ctx.obj["config"]
+    _run_monthly_update(config)
+
+
 @cli.command(name="export")
 @click.option("--source", type=click.Choice(["marklines", "fcai", "all"]), default="all")
 @click.option("--format", "fmt", type=click.Choice(["csv"]), default="csv")
@@ -787,3 +795,25 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
                 click.echo(f"Exported {len(df)} FCAI sales to {out_dir / fname}")
     finally:
         db.close()
+
+
+def _run_monthly_update(config: AppConfig) -> None:
+    """Run monthly update and print report."""
+    import json as json_mod
+
+    from motor_vehicles.update import run_monthly_update
+
+    click.echo("=== Monthly Update ===")
+    report = run_monthly_update(config)
+    click.echo(report.summary_text())
+
+    # Write JSON report to exports
+    out_dir = Path(config.export.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    json_path = out_dir / f"update_report_{ts}.json"
+    json_path.write_text(
+        json_mod.dumps(report.model_dump(), indent=2, default=str),
+        encoding="utf-8",
+    )
+    click.echo(f"\nReport saved to {json_path}")

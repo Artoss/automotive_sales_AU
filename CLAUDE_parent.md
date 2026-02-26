@@ -56,7 +56,7 @@ Scraper_NNNN_Name/
 ## CLI Pattern
 
 - Click group with `@click.group(invoke_without_command=True)`
-- Standard subcommands: `migrate`, `run`, `download`, `parse`, `status`, `export`
+- Standard subcommands: `migrate`, `run`, `update`, `download`, `parse`, `status`, `export`
 - Config loaded in group, passed via `ctx.obj["config"]`
 - Entry point in pyproject.toml: `project-name = "package.main:cli"`
 

@@ -482,6 +482,26 @@ class Database:
                 count += 1
         return count
 
+    # --- Update Helpers ---
+
+    def get_existing_article_urls(self) -> set[str]:
+        """Return the set of all article URLs already in fcai_articles."""
+        with self.cursor() as cur:
+            cur.execute("SELECT url FROM fcai_articles")
+            return {row["url"] for row in cur.fetchall()}
+
+    def get_latest_marklines_month(self) -> tuple[int, int] | None:
+        """Return (year, month) of the most recent marklines_sales row, or None."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT year, month FROM marklines_sales "
+                "ORDER BY year DESC, month DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row:
+                return (row["year"], row["month"])
+            return None
+
     # --- Stats ---
 
     def get_observation_stats(self) -> dict:
