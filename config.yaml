@@ -1,0 +1,67 @@
+# Motor Vehicles Scraper Configuration
+# =====================================
+
+run_mode: "full"
+
+# Marklines scope
+marklines:
+  base_url: "https://www.marklines.com/en/statistics/flash_sales/automotive-sales-in-australia-by-month"
+  historical_url_template: "https://www.marklines.com/en/statistics/flash_sales/salesfig_australia_{year}"
+  years: [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
+  use_browser_fallback: false
+
+# FCAI scope
+fcai:
+  base_url: "https://www.fcai.com.au/library/publication/"
+  filename_template: "{month}_{year}_vfacts_media_release_and_industry_summary.pdf"
+  years: [2024, 2023, 2022]
+  months:
+    - january
+    - february
+    - march
+    - april
+    - may
+    - june
+    - july
+    - august
+    - september
+    - october
+    - november
+    - december
+  download_dir: "./data/pdfs"
+
+# Rate limiting and HTTP
+http:
+  min_delay_seconds: 2.0
+  max_delay_seconds: 5.0
+  max_retries: 3
+  retry_backoff_factor: 2.0
+  timeout_seconds: 60
+  user_agents:
+    - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  default_headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-AU,en;q=0.9"
+
+# Database (local PostgreSQL)
+database:
+  pg_host: "localhost"
+  pg_port: 5432
+  pg_database: "automotive_sales_au"
+  pg_user: "postgres"
+  pg_password: ""
+
+# Export
+export:
+  enabled: true
+  format: "csv"
+  output_dir: "./exports"
+  timestamp_files: true
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./logs/motor_vehicles.log"
+  console: true
+  rotate_mb: 10
+  keep_backups: 5
