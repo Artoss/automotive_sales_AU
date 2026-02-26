@@ -182,10 +182,10 @@ def update(ctx):
 
 @cli.command(name="export")
 @click.option("--source", type=click.Choice(["marklines", "fcai", "all"]), default="all")
-@click.option("--format", "fmt", type=click.Choice(["csv"]), default="csv")
+@click.option("--format", "fmt", type=click.Choice(["csv", "json", "excel"]), default="csv")
 @click.pass_context
 def export_cmd(ctx, source, fmt):
-    """Export data to CSV."""
+    """Export data to CSV, JSON, or Excel."""
     config: AppConfig = ctx.obj["config"]
     _run_export(config, source=source, fmt=fmt)
 
@@ -384,7 +384,9 @@ def _fcai_full(
         db.ensure_schema("migrations")
         run_id = db.start_run(source="fcai", config_hash=config.config_hash())
 
+        incremental = config.run_mode == "incremental"
         total_records = 0
+        skipped = 0
         for entry in catalog:
             try:
                 result = client.download_pdf(entry)
@@ -394,6 +396,15 @@ def _fcai_full(
                     click.echo(f"  [SKIP] {entry['filename']} (download failed)")
                     continue
 
+                # In incremental mode, skip if file hash matches DB
+                file_hash = result.get("file_hash", "")
+                if incremental and file_hash:
+                    existing_hash = db.get_publication_hash(entry["filename"])
+                    if existing_hash == file_hash:
+                        skipped += 1
+                        click.echo(f"  [SKIP] {entry['filename']} (unchanged)")
+                        continue
+
                 # Extract tables from PDF
                 records = extract_tables_from_pdf(filepath)
                 if records:
@@ -402,7 +413,7 @@ def _fcai_full(
                         "month": entry["month_num"],
                         "filename": entry["filename"],
                         "url": entry["url"],
-                        "file_hash": result.get("file_hash", ""),
+                        "file_hash": file_hash,
                         "file_size_bytes": result.get("file_size_bytes", 0),
                     }
                     count = load_fcai_publication(db, run_id, publication, records)
@@ -414,6 +425,9 @@ def _fcai_full(
             except Exception as e:
                 logger.error("Failed to process %s: %s", entry["filename"], e, exc_info=True)
                 click.echo(f"  [ERROR] {entry['filename']}: {e}")
+
+        if incremental and skipped:
+            click.echo(f"  Skipped {skipped} unchanged publications")
 
         db.finish_run(run_id, status="completed", records_count=total_records)
         click.echo(f"\nFCAI complete: {total_records} records loaded (run #{run_id})")
@@ -754,7 +768,9 @@ def _run_status(config: AppConfig) -> None:
 
 
 def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> None:
-    """Export data to CSV."""
+    """Export data to CSV, JSON, or Excel."""
+    import json as json_mod
+
     import pandas as pd
 
     from motor_vehicles.storage.database import Database
@@ -766,6 +782,9 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
         out_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") if config.export.timestamp_files else ""
 
+        # Collect dataframes by name
+        datasets: dict[str, pd.DataFrame] = {}
+
         if source in ("marklines", "all"):
             with db.cursor() as cur:
                 cur.execute(
@@ -775,10 +794,7 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
                 )
                 rows = cur.fetchall()
             if rows:
-                df = pd.DataFrame(rows)
-                fname = f"marklines_sales_{timestamp}.csv" if timestamp else "marklines_sales.csv"
-                df.to_csv(out_dir / fname, index=False)
-                click.echo(f"Exported {len(df)} marklines sales to {out_dir / fname}")
+                datasets["marklines_sales"] = pd.DataFrame(rows)
 
         if source in ("fcai", "all"):
             with db.cursor() as cur:
@@ -789,10 +805,36 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
                 )
                 rows = cur.fetchall()
             if rows:
-                df = pd.DataFrame(rows)
-                fname = f"fcai_sales_{timestamp}.csv" if timestamp else "fcai_sales.csv"
-                df.to_csv(out_dir / fname, index=False)
-                click.echo(f"Exported {len(df)} FCAI sales to {out_dir / fname}")
+                datasets["fcai_sales"] = pd.DataFrame(rows)
+
+        if not datasets:
+            click.echo("No data to export.")
+            return
+
+        ext = {"csv": "csv", "json": "json", "excel": "xlsx"}[fmt]
+
+        if fmt == "excel":
+            # All datasets in one workbook, one sheet per source
+            fname = f"motor_vehicles_{timestamp}.xlsx" if timestamp else "motor_vehicles.xlsx"
+            fpath = out_dir / fname
+            with pd.ExcelWriter(fpath, engine="openpyxl") as writer:
+                for name, df in datasets.items():
+                    df.to_excel(writer, sheet_name=name, index=False)
+            total = sum(len(df) for df in datasets.values())
+            click.echo(f"Exported {total} rows ({len(datasets)} sheets) to {fpath}")
+        else:
+            # One file per dataset
+            for name, df in datasets.items():
+                fname = f"{name}_{timestamp}.{ext}" if timestamp else f"{name}.{ext}"
+                fpath = out_dir / fname
+                if fmt == "csv":
+                    df.to_csv(fpath, index=False)
+                elif fmt == "json":
+                    fpath.write_text(
+                        json_mod.dumps(df.to_dict(orient="records"), indent=2, default=str),
+                        encoding="utf-8",
+                    )
+                click.echo(f"Exported {len(df)} {name} to {fpath}")
     finally:
         db.close()
 

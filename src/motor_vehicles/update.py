@@ -138,10 +138,14 @@ class UpdateReport(BaseModel):
 # ---------------------------------------------------------------------------
 
 def compute_marklines_years(today: date | None = None) -> list[int]:
-    """Return [current_year, current_year - 1] for dynamic Marklines scope."""
+    """Return years to fetch as separate year pages.
+
+    The current page already covers the current year, so we only need
+    the previous year as an additional page fetch.
+    """
     if today is None:
         today = date.today()
-    return [today.year, today.year - 1]
+    return [today.year - 1]
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ dependencies = [
     "tenacity>=8.2",
     "beautifulsoup4>=4.14.3",
     "anthropic>=0.40",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
