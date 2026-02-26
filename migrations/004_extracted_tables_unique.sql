@@ -8,7 +8,16 @@ WHERE a.image_id = b.image_id
   AND a.table_index = b.table_index
   AND a.id < b.id;
 
--- Now add the constraint
-ALTER TABLE fcai_article_extracted_tables
-    ADD CONSTRAINT uq_extracted_table_image_index
-    UNIQUE (image_id, table_index);
+-- Now add the constraint (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'uq_extracted_table_image_index'
+    ) THEN
+        ALTER TABLE fcai_article_extracted_tables
+            ADD CONSTRAINT uq_extracted_table_image_index
+            UNIQUE (image_id, table_index);
+    END IF;
+END
+$$;

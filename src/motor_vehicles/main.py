@@ -136,6 +136,14 @@ def fcai_articles(ctx, url, list_only, process_all):
     _fcai_articles(config, url=url, list_only=list_only, process_all=process_all)
 
 
+@fcai.command(name="build-state-sales")
+@click.pass_context
+def fcai_build_state_sales(ctx):
+    """Extract State/Territory time-series from article tables."""
+    config: AppConfig = ctx.obj["config"]
+    _fcai_build_state_sales(config)
+
+
 # ---------------------------------------------------------------------------
 # Top-level commands
 # ---------------------------------------------------------------------------
@@ -560,6 +568,103 @@ def _fcai_articles(
         raise
     finally:
         scraper.close()
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Implementation: FCAI State/Territory
+# ---------------------------------------------------------------------------
+
+def _fcai_build_state_sales(config: AppConfig) -> None:
+    """Extract State/Territory time-series from already-extracted article tables."""
+    import json
+
+    import pandas as pd
+
+    from motor_vehicles.extraction.state_sales import extract_state_sales
+    from motor_vehicles.storage.database import Database
+
+    db = Database(config.database)
+    try:
+        db.connect()
+        db.ensure_schema("migrations")
+
+        with db.cursor() as cur:
+            cur.execute('''
+                SELECT t.id AS table_id, t.headers, t.row_data,
+                       a.year, a.month
+                FROM fcai_article_extracted_tables t
+                JOIN fcai_article_images i ON t.image_id = i.id
+                JOIN fcai_articles a ON i.article_id = a.id
+                WHERE a.year IS NOT NULL AND a.month IS NOT NULL
+                ORDER BY a.year, a.month
+            ''')
+            all_tables = cur.fetchall()
+
+        click.echo(f"Scanning {len(all_tables)} extracted tables for State/Territory data...")
+
+        total_records = 0
+        months_found = set()
+
+        for tbl in all_tables:
+            headers = tbl["headers"] if isinstance(tbl["headers"], list) else json.loads(tbl["headers"])
+            row_data = tbl["row_data"] if isinstance(tbl["row_data"], list) else json.loads(tbl["row_data"])
+
+            records = extract_state_sales(headers, row_data, tbl["year"], tbl["month"])
+            if not records:
+                continue
+
+            count = db.upsert_fcai_state_sales(records, source_table_id=tbl["table_id"])
+            total_records += count
+            key = (tbl["year"], tbl["month"])
+            months_found.add(key)
+            click.echo(
+                f"  {tbl['year']}/{tbl['month']:02d}: "
+                f"{count} state records (table #{tbl['table_id']})"
+            )
+
+        click.echo(f"\nLoaded {total_records} records across {len(months_found)} months")
+
+        # Show coverage summary
+        if months_found:
+            sorted_months = sorted(months_found)
+            first_y, first_m = sorted_months[0]
+            last_y, last_m = sorted_months[-1]
+            click.echo(f"Coverage: {first_y}/{first_m:02d} to {last_y}/{last_m:02d}")
+
+            # Detect gaps
+            all_expected = set()
+            y, m = first_y, first_m
+            while (y, m) <= (last_y, last_m):
+                all_expected.add((y, m))
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+            gaps = sorted(all_expected - months_found)
+            if gaps:
+                gap_strs = [f"{y}/{m:02d}" for y, m in gaps]
+                click.echo(f"Missing months: {', '.join(gap_strs)}")
+
+        # Export CSV
+        with db.cursor() as cur:
+            cur.execute('''
+                SELECT year, month, state_abbrev, state, units_sold,
+                       units_sold_prev_year, yoy_pct
+                FROM fcai_state_sales
+                ORDER BY year, month, state_abbrev
+            ''')
+            rows = cur.fetchall()
+
+        if rows:
+            df = pd.DataFrame(rows)
+            out_dir = Path(config.export.output_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            csv_path = out_dir / "fcai_state_sales.csv"
+            df.to_csv(csv_path, index=False)
+            click.echo(f"\nExported {len(df)} rows to {csv_path}")
+
+    finally:
         db.close()
 
 

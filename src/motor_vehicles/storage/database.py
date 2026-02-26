@@ -448,6 +448,40 @@ class Database:
             assert row is not None
             return row["id"]
 
+    def upsert_fcai_state_sales(
+        self, records: list[dict], source_table_id: int | None = None,
+    ) -> int:
+        """Upsert State/Territory sales records. Returns count upserted."""
+        count = 0
+        with self.cursor() as cur:
+            for rec in records:
+                cur.execute(
+                    """
+                    INSERT INTO fcai_state_sales
+                        (year, month, state, state_abbrev, units_sold,
+                         units_sold_prev_year, yoy_pct, source_table_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (year, month, state) DO UPDATE SET
+                        state_abbrev = EXCLUDED.state_abbrev,
+                        units_sold = EXCLUDED.units_sold,
+                        units_sold_prev_year = EXCLUDED.units_sold_prev_year,
+                        yoy_pct = EXCLUDED.yoy_pct,
+                        source_table_id = EXCLUDED.source_table_id
+                    """,
+                    (
+                        rec["year"],
+                        rec["month"],
+                        rec["state"],
+                        rec["state_abbrev"],
+                        rec.get("units_sold"),
+                        rec.get("units_sold_prev_year"),
+                        rec.get("yoy_pct"),
+                        source_table_id,
+                    ),
+                )
+                count += 1
+        return count
+
     # --- Stats ---
 
     def get_observation_stats(self) -> dict:
