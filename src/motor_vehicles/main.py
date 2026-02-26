@@ -125,6 +125,17 @@ def fcai_run(ctx, year, month):
     _fcai_full(config, year=year, month=month)
 
 
+@fcai.command(name="articles")
+@click.option("--url", help="Process a single article URL")
+@click.option("--list-only", is_flag=True, help="List article URLs without processing")
+@click.option("--process-all", is_flag=True, help="Process all monthly sales articles")
+@click.pass_context
+def fcai_articles(ctx, url, list_only, process_all):
+    """Scrape FCAI media release articles for table images."""
+    config: AppConfig = ctx.obj["config"]
+    _fcai_articles(config, url=url, list_only=list_only, process_all=process_all)
+
+
 # ---------------------------------------------------------------------------
 # Top-level commands
 # ---------------------------------------------------------------------------
@@ -199,15 +210,26 @@ def _marklines_parse(config: AppConfig) -> None:
         return
 
     total_sales = 0
-    total_totals = 0
+    total_vtypes = 0
+    total_commentary = 0
     for filepath in sorted(data_dir.glob("*.html")):
         html = filepath.read_text(encoding="utf-8")
-        sales, totals = parse_page(html, source_url=filepath.name)
-        total_sales += len(sales)
-        total_totals += len(totals)
-        click.echo(f"  {filepath.name}: {len(sales)} sales, {len(totals)} totals")
+        result = parse_page(html, source_url=filepath.name)
+        n_sales = len(result.all_maker_sales)
+        n_vtypes = len(result.all_vehicle_type_sales)
+        n_commentary = len(result.all_commentary)
+        total_sales += n_sales
+        total_vtypes += n_vtypes
+        total_commentary += n_commentary
+        click.echo(
+            f"  {filepath.name}: {n_sales} sales, "
+            f"{n_vtypes} vehicle types, {n_commentary} commentary"
+        )
 
-    click.echo(f"\nTotal: {total_sales} sales records, {total_totals} total records")
+    click.echo(
+        f"\nTotal: {total_sales} sales, {total_vtypes} vehicle types, "
+        f"{total_commentary} commentary records"
+    )
 
 
 def _marklines_full(config: AppConfig) -> None:
@@ -232,8 +254,11 @@ def _marklines_full(config: AppConfig) -> None:
             browser = MarklinesBrowser()
             browser.start()
             urls = [config.marklines.base_url] + [
+                f"{config.marklines.base_url}-{y}"
+                for y in config.marklines.recent_years
+            ] + [
                 config.marklines.historical_url_template.format(year=y)
-                for y in config.marklines.years
+                for y in config.marklines.historical_years
             ]
             pages = browser.fetch_all_pages(urls)
             browser.close()
@@ -241,15 +266,23 @@ def _marklines_full(config: AppConfig) -> None:
             pages = client.fetch_all_pages()
 
         all_sales: list[dict] = []
-        all_totals: list[dict] = []
+        all_vtypes: list[dict] = []
+        all_commentary: list[dict] = []
 
         for url, html in pages.items():
-            sales, totals = parse_page(html, source_url=url)
-            all_sales.extend(sales)
-            all_totals.extend(totals)
-            click.echo(f"  Parsed {url}: {len(sales)} sales, {len(totals)} totals")
+            result = parse_page(html, source_url=url)
+            all_sales.extend(result.all_maker_sales)
+            all_vtypes.extend(result.all_vehicle_type_sales)
+            all_commentary.extend(result.all_commentary)
+            click.echo(
+                f"  Parsed {url}: {len(result.all_maker_sales)} sales, "
+                f"{len(result.all_vehicle_type_sales)} vtypes, "
+                f"{len(result.all_commentary)} commentary"
+            )
 
-        total = load_marklines_data(db, run_id, all_sales, all_totals)
+        total = load_marklines_data(
+            db, run_id, all_sales, all_vtypes, all_commentary
+        )
         db.finish_run(run_id, status="completed", records_count=total)
         click.echo(f"\nMarklines complete: {total} records loaded (run #{run_id})")
 
@@ -378,6 +411,158 @@ def _fcai_full(
         db.close()
 
 
+def _fcai_articles(
+    config: AppConfig,
+    url: str | None = None,
+    list_only: bool = False,
+    process_all: bool = False,
+) -> None:
+    """Scrape FCAI media release articles for table images."""
+    from motor_vehicles.extraction.image_tables import (
+        download_article_image,
+        extract_tables_from_image,
+    )
+    from motor_vehicles.scraping.fcai_articles import (
+        FcaiArticleScraper,
+        classify_sales_article,
+    )
+    from motor_vehicles.storage.database import Database
+    from motor_vehicles.storage.loader import load_fcai_article
+
+    scraper = FcaiArticleScraper(config.http, config.fcai.articles)
+
+    if list_only:
+        click.echo("Fetching article listings...")
+        listings = scraper.fetch_article_listings()
+        sales_count = 0
+        for listing in listings:
+            is_sales = classify_sales_article(listing.title)
+            marker = " *" if is_sales else "  "
+            click.echo(f"{marker} {listing.date_text:20s} {listing.title}")
+            click.echo(f"   {listing.url}")
+            if is_sales:
+                sales_count += 1
+        click.echo(f"\nFound {len(listings)} articles ({sales_count} monthly sales articles marked with *)")
+        scraper.close()
+        return
+
+    # Build list of URLs to process
+    urls_to_process: list[str] = []
+    if process_all:
+        click.echo("Fetching article listings...")
+        listings = scraper.fetch_article_listings()
+        for listing in listings:
+            if classify_sales_article(listing.title):
+                urls_to_process.append(listing.url)
+        click.echo(f"Found {len(urls_to_process)} monthly sales articles to process")
+    elif url:
+        urls_to_process = [url]
+    else:
+        click.echo("Please provide --url for a specific article, --list-only to browse, or --process-all.")
+        scraper.close()
+        return
+
+    db = Database(config.database)
+    try:
+        db.connect()
+        db.ensure_schema("migrations")
+        run_id = db.start_run(source="fcai_articles", config_hash=config.config_hash())
+
+        grand_total_images = 0
+        grand_total_tables = 0
+
+        for art_idx, art_url in enumerate(urls_to_process):
+            click.echo(f"\n{'='*60}")
+            click.echo(f"Article {art_idx + 1}/{len(urls_to_process)}: {art_url}")
+
+            try:
+                article = scraper.fetch_article(art_url)
+            except Exception as e:
+                logger.error("Failed to fetch article %s: %s", art_url, e, exc_info=True)
+                click.echo(f"  [ERROR] Failed to fetch: {e}")
+                continue
+
+            click.echo(f"  Title: {article.title}")
+            click.echo(f"  Year: {article.year}, Month: {article.month}")
+            click.echo(f"  Images found: {len(article.image_urls)}")
+
+            if not article.image_urls:
+                click.echo("  No data images found, skipping.")
+                continue
+
+            # Download images and extract tables
+            download_dir = config.fcai.articles.image_download_dir
+            images: list[dict] = []
+            extracted_tables: dict[int, list[dict]] = {}
+            total_tables = 0
+
+            for idx, img_url in enumerate(article.image_urls):
+                label = article.image_labels[idx] if idx < len(article.image_labels) else ""
+                click.echo(f"  Image {idx + 1}: {label or '(no label)'}")
+
+                try:
+                    filepath = download_article_image(scraper._client, img_url, download_dir)
+                    filename = img_url.split("/")[-1].split("?")[0]
+
+                    images.append({
+                        "image_url": img_url,
+                        "image_filename": filename,
+                        "local_path": str(filepath),
+                        "image_order": idx,
+                        "image_label": label,
+                    })
+
+                    # Extract tables from image
+                    tables = extract_tables_from_image(filepath, config.vision)
+                    extracted_tables[idx] = tables
+                    total_tables += len(tables)
+
+                    for t_idx, table in enumerate(tables):
+                        n_rows = len(table.get("rows", []))
+                        n_cols = len(table.get("headers", []))
+                        click.echo(f"    Table {t_idx + 1}: {n_cols} cols x {n_rows} rows")
+
+                except Exception as e:
+                    logger.error("Failed to process image %s: %s", img_url, e, exc_info=True)
+                    click.echo(f"    [ERROR] {e}")
+
+            # Load to database
+            article_dict = {
+                "url": article.url,
+                "slug": article.slug,
+                "title": article.title,
+                "published_date": str(article.published_date) if article.published_date else None,
+                "year": article.year,
+                "month": article.month,
+                "article_text": article.body_text,
+                "is_sales_article": article.is_sales_article,
+            }
+
+            load_fcai_article(db, run_id, article_dict, images, extracted_tables)
+            grand_total_images += len(images)
+            grand_total_tables += total_tables
+            click.echo(f"  Loaded: {len(images)} images, {total_tables} tables")
+
+            # Rate limit between articles
+            if art_idx < len(urls_to_process) - 1:
+                scraper._delay()
+
+        db.finish_run(run_id, status="completed", records_count=grand_total_tables)
+        click.echo(
+            f"\n{'='*60}"
+            f"\nFCAI articles complete: {len(urls_to_process)} articles, "
+            f"{grand_total_images} images, {grand_total_tables} tables (run #{run_id})"
+        )
+
+    except Exception as e:
+        logger.error("FCAI articles pipeline failed: %s", e, exc_info=True)
+        click.echo(f"FCAI articles pipeline failed: {e}")
+        raise
+    finally:
+        scraper.close()
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # Implementation: Top-level
 # ---------------------------------------------------------------------------
@@ -443,10 +628,14 @@ def _run_status(config: AppConfig) -> None:
         stats = db.get_observation_stats()
         if stats:
             click.echo(f"\nDatabase totals:")
-            click.echo(f"  Marklines sales:   {stats.get('marklines_sales_count', 0):,}")
-            click.echo(f"  Marklines totals:  {stats.get('marklines_totals_count', 0):,}")
-            click.echo(f"  FCAI publications: {stats.get('fcai_publications_count', 0):,}")
-            click.echo(f"  FCAI sales:        {stats.get('fcai_sales_count', 0):,}")
+            click.echo(f"  Marklines sales:        {stats.get('marklines_sales_count', 0):,}")
+            click.echo(f"  Marklines vehicle types: {stats.get('marklines_vtype_count', 0):,}")
+            click.echo(f"  Marklines commentary:    {stats.get('marklines_commentary_count', 0):,}")
+            click.echo(f"  FCAI publications:       {stats.get('fcai_publications_count', 0):,}")
+            click.echo(f"  FCAI sales:              {stats.get('fcai_sales_count', 0):,}")
+            click.echo(f"  FCAI articles:           {stats.get('fcai_articles_count', 0):,}")
+            click.echo(f"  FCAI article images:     {stats.get('fcai_article_images_count', 0):,}")
+            click.echo(f"  FCAI extracted tables:   {stats.get('fcai_extracted_tables_count', 0):,}")
     finally:
         db.close()
 
@@ -467,7 +656,8 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
         if source in ("marklines", "all"):
             with db.cursor() as cur:
                 cur.execute(
-                    "SELECT year, month, make, units_sold, source_url "
+                    "SELECT year, month, make, units_sold, market_share, "
+                    "units_sold_prev_year, yoy_pct, source_url "
                     "FROM marklines_sales ORDER BY year, month, make"
                 )
                 rows = cur.fetchall()

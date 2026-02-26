@@ -1,6 +1,11 @@
 """
 HTTP client for fetching Marklines HTML pages.
 Uses httpx with tenacity retry/backoff.
+
+URL patterns:
+  - Current page: .../automotive-sales-in-australia-by-month
+  - Recent years (2021+): .../automotive-sales-in-australia-by-month-{year}
+  - Old format (2020-): .../salesfig_australia_{year}
 """
 
 from __future__ import annotations
@@ -57,13 +62,19 @@ class MarklinesClient:
         response.raise_for_status()
         return response.text
 
+    def _build_url(self, year: int) -> str:
+        """Build the URL for a given year using the appropriate format."""
+        if year in self.marklines_config.recent_years:
+            return f"{self.marklines_config.base_url}-{year}"
+        return self.marklines_config.historical_url_template.format(year=year)
+
     def fetch_current_page(self) -> str:
-        """Fetch the main Marklines page (current + recent years)."""
+        """Fetch the main Marklines page (most recent month)."""
         return self._fetch(self.marklines_config.base_url)
 
-    def fetch_historical_page(self, year: int) -> str:
-        """Fetch a historical year page."""
-        url = self.marklines_config.historical_url_template.format(year=year)
+    def fetch_year_page(self, year: int) -> str:
+        """Fetch a specific year page."""
+        url = self._build_url(year)
         self._delay()
         return self._fetch(url)
 
@@ -71,7 +82,7 @@ class MarklinesClient:
         """Fetch all configured pages. Returns {url: html} dict."""
         pages: dict[str, str] = {}
 
-        # Current page (covers current year + previous 2 years)
+        # Current page (most recent month)
         url = self.marklines_config.base_url
         try:
             pages[url] = self.fetch_current_page()
@@ -79,13 +90,24 @@ class MarklinesClient:
         except httpx.HTTPStatusError as e:
             logger.error("Failed to fetch current page: %s", e)
 
-        # Historical pages
-        for year in self.marklines_config.years:
-            hist_url = self.marklines_config.historical_url_template.format(year=year)
-            if hist_url == url:
+        # Recent year pages (append -YYYY to base URL)
+        for year in self.marklines_config.recent_years:
+            year_url = self._build_url(year)
+            if year_url in pages:
                 continue
             try:
-                pages[hist_url] = self.fetch_historical_page(year)
+                pages[year_url] = self.fetch_year_page(year)
+                logger.info("Fetched recent year page for %d", year)
+            except httpx.HTTPStatusError as e:
+                logger.warning("Failed to fetch %d page: %s", year, e)
+
+        # Historical year pages (old URL format)
+        for year in self.marklines_config.historical_years:
+            hist_url = self._build_url(year)
+            if hist_url in pages:
+                continue
+            try:
+                pages[hist_url] = self.fetch_year_page(year)
                 logger.info("Fetched historical page for %d", year)
             except httpx.HTTPStatusError as e:
                 logger.warning("Failed to fetch %d page: %s", year, e)

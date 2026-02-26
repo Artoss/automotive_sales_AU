@@ -135,11 +135,15 @@ class Database:
                 cur.execute(
                     """
                     INSERT INTO marklines_sales
-                        (scrape_run_id, year, month, make, units_sold, source_url)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                        (scrape_run_id, year, month, make, units_sold,
+                         market_share, units_sold_prev_year, yoy_pct, source_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (year, month, make)
                     DO UPDATE SET
                         units_sold = EXCLUDED.units_sold,
+                        market_share = EXCLUDED.market_share,
+                        units_sold_prev_year = EXCLUDED.units_sold_prev_year,
+                        yoy_pct = EXCLUDED.yoy_pct,
                         source_url = EXCLUDED.source_url,
                         scrape_run_id = EXCLUDED.scrape_run_id
                     """,
@@ -149,6 +153,9 @@ class Database:
                         rec["month"],
                         rec["make"],
                         rec.get("units_sold"),
+                        rec.get("market_share"),
+                        rec.get("units_sold_prev_year"),
+                        rec.get("yoy_pct"),
                         rec.get("source_url", ""),
                     ),
                 )
@@ -156,10 +163,12 @@ class Database:
         logger.info("Upserted %d marklines sales records for run #%d", count, run_id)
         return count
 
-    # --- Marklines Totals ---
+    # --- Marklines Vehicle Type Sales ---
 
-    def upsert_marklines_totals(self, records: list[dict], run_id: int) -> int:
-        """Bulk upsert marklines total records. Returns count."""
+    def upsert_marklines_vehicle_types(
+        self, records: list[dict], run_id: int
+    ) -> int:
+        """Bulk upsert marklines vehicle type sales. Returns count."""
         if not records:
             return 0
         count = 0
@@ -167,12 +176,15 @@ class Database:
             for rec in records:
                 cur.execute(
                     """
-                    INSERT INTO marklines_totals
-                        (scrape_run_id, year, month, total_units, source_url)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (year, month)
+                    INSERT INTO marklines_vehicle_type_sales
+                        (scrape_run_id, year, month, vehicle_type,
+                         units_sold, units_sold_prev_year, yoy_pct, source_url)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (year, month, vehicle_type)
                     DO UPDATE SET
-                        total_units = EXCLUDED.total_units,
+                        units_sold = EXCLUDED.units_sold,
+                        units_sold_prev_year = EXCLUDED.units_sold_prev_year,
+                        yoy_pct = EXCLUDED.yoy_pct,
                         source_url = EXCLUDED.source_url,
                         scrape_run_id = EXCLUDED.scrape_run_id
                     """,
@@ -180,12 +192,56 @@ class Database:
                         run_id,
                         rec["year"],
                         rec["month"],
-                        rec.get("total_units"),
+                        rec["vehicle_type"],
+                        rec.get("units_sold"),
+                        rec.get("units_sold_prev_year"),
+                        rec.get("yoy_pct"),
                         rec.get("source_url", ""),
                     ),
                 )
                 count += 1
-        logger.info("Upserted %d marklines totals for run #%d", count, run_id)
+        logger.info(
+            "Upserted %d marklines vehicle type records for run #%d", count, run_id
+        )
+        return count
+
+    # --- Marklines Commentary ---
+
+    def upsert_marklines_commentary(
+        self, records: list[dict], run_id: int
+    ) -> int:
+        """Bulk upsert marklines commentary records. Returns count."""
+        if not records:
+            return 0
+        count = 0
+        with self.cursor() as cur:
+            for rec in records:
+                cur.execute(
+                    """
+                    INSERT INTO marklines_commentary
+                        (scrape_run_id, year, month, report_date,
+                         commentary, source_url)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (year, month)
+                    DO UPDATE SET
+                        report_date = EXCLUDED.report_date,
+                        commentary = EXCLUDED.commentary,
+                        source_url = EXCLUDED.source_url,
+                        scrape_run_id = EXCLUDED.scrape_run_id
+                    """,
+                    (
+                        run_id,
+                        rec["year"],
+                        rec["month"],
+                        rec.get("report_date", ""),
+                        rec["commentary"],
+                        rec.get("source_url", ""),
+                    ),
+                )
+                count += 1
+        logger.info(
+            "Upserted %d marklines commentary records for run #%d", count, run_id
+        )
         return count
 
     # --- FCAI Publications ---
@@ -283,6 +339,115 @@ class Database:
         )
         return count
 
+    # --- FCAI Articles ---
+
+    def upsert_fcai_article(self, record: dict, run_id: int) -> int:
+        """Upsert an FCAI article record. Returns the article id."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO fcai_articles
+                    (scrape_run_id, url, slug, title, published_date,
+                     year, month, article_text, is_sales_article)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (url)
+                DO UPDATE SET
+                    title = EXCLUDED.title,
+                    published_date = EXCLUDED.published_date,
+                    year = EXCLUDED.year,
+                    month = EXCLUDED.month,
+                    article_text = EXCLUDED.article_text,
+                    is_sales_article = EXCLUDED.is_sales_article,
+                    scrape_run_id = EXCLUDED.scrape_run_id,
+                    scraped_at = NOW()
+                RETURNING id
+                """,
+                (
+                    run_id,
+                    record["url"],
+                    record["slug"],
+                    record["title"],
+                    record.get("published_date"),
+                    record.get("year"),
+                    record.get("month"),
+                    record.get("article_text", ""),
+                    record.get("is_sales_article", False),
+                ),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            article_id = row["id"]
+            logger.info("Upserted FCAI article #%d: %s", article_id, record["slug"])
+            return article_id
+
+    def upsert_fcai_article_image(self, article_id: int, record: dict) -> int:
+        """Upsert an FCAI article image record. Returns the image id."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO fcai_article_images
+                    (article_id, image_url, image_filename, local_path,
+                     image_order, image_label, width, height)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (article_id, image_url)
+                DO UPDATE SET
+                    local_path = EXCLUDED.local_path,
+                    image_order = EXCLUDED.image_order,
+                    image_label = EXCLUDED.image_label,
+                    width = EXCLUDED.width,
+                    height = EXCLUDED.height,
+                    downloaded_at = NOW()
+                RETURNING id
+                """,
+                (
+                    article_id,
+                    record["image_url"],
+                    record["image_filename"],
+                    record.get("local_path", ""),
+                    record.get("image_order", 0),
+                    record.get("image_label", ""),
+                    record.get("width"),
+                    record.get("height"),
+                ),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            return row["id"]
+
+    def insert_fcai_extracted_table(self, image_id: int, record: dict) -> int:
+        """Upsert an extracted table record. Returns the table id."""
+        import json
+
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO fcai_article_extracted_tables
+                    (image_id, table_index, headers, row_data,
+                     dataframe_csv, extraction_method, confidence)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (image_id, table_index) DO UPDATE SET
+                    headers = EXCLUDED.headers,
+                    row_data = EXCLUDED.row_data,
+                    dataframe_csv = EXCLUDED.dataframe_csv,
+                    extraction_method = EXCLUDED.extraction_method,
+                    confidence = EXCLUDED.confidence,
+                    extracted_at = NOW()
+                RETURNING id
+                """,
+                (
+                    image_id,
+                    record.get("table_index", 0),
+                    json.dumps(record.get("headers", [])),
+                    json.dumps(record.get("rows", [])),
+                    record.get("dataframe_csv", ""),
+                    record.get("extraction_method", "vision_llm"),
+                    record.get("confidence", 0.85),
+                ),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            return row["id"]
+
     # --- Stats ---
 
     def get_observation_stats(self) -> dict:
@@ -292,9 +457,13 @@ class Database:
                 """
                 SELECT
                     (SELECT COUNT(*) FROM marklines_sales) as marklines_sales_count,
-                    (SELECT COUNT(*) FROM marklines_totals) as marklines_totals_count,
+                    (SELECT COUNT(*) FROM marklines_vehicle_type_sales) as marklines_vtype_count,
+                    (SELECT COUNT(*) FROM marklines_commentary) as marklines_commentary_count,
                     (SELECT COUNT(*) FROM fcai_publications) as fcai_publications_count,
-                    (SELECT COUNT(*) FROM fcai_sales_data) as fcai_sales_count
+                    (SELECT COUNT(*) FROM fcai_sales_data) as fcai_sales_count,
+                    (SELECT COUNT(*) FROM fcai_articles) as fcai_articles_count,
+                    (SELECT COUNT(*) FROM fcai_article_images) as fcai_article_images_count,
+                    (SELECT COUNT(*) FROM fcai_article_extracted_tables) as fcai_extracted_tables_count
                 """
             )
             return cur.fetchone() or {}

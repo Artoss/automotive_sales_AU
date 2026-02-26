@@ -24,8 +24,17 @@ class MarklinesConfig(BaseModel):
     """Marklines scraping scope."""
     base_url: str = "https://www.marklines.com/en/statistics/flash_sales/automotive-sales-in-australia-by-month"
     historical_url_template: str = "https://www.marklines.com/en/statistics/flash_sales/salesfig_australia_{year}"
-    years: list[int] = [2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
+    recent_years: list[int] = [2025, 2024, 2023, 2022, 2021]
+    historical_years: list[int] = [2020, 2019, 2018]
     use_browser_fallback: bool = False
+
+
+class FcaiArticlesConfig(BaseModel):
+    """FCAI article-based scraping scope."""
+    listing_url: str = "https://www.fcai.com.au/news-and-media/"
+    listing_params: dict[str, str] = {"_sft_category": "media-release"}
+    max_pages: int = 5
+    image_download_dir: str = "./data/fcai_images"
 
 
 class FcaiConfig(BaseModel):
@@ -38,6 +47,7 @@ class FcaiConfig(BaseModel):
         "july", "august", "september", "october", "november", "december",
     ]
     download_dir: str = "./data/pdfs"
+    articles: FcaiArticlesConfig = Field(default_factory=FcaiArticlesConfig)
 
 
 class HttpConfig(BaseModel):
@@ -96,6 +106,26 @@ class DatabaseConfig(BaseModel):
         }
 
 
+class VisionConfig(BaseModel):
+    """Vision LLM settings for image table extraction."""
+    provider: Literal["openrouter", "anthropic"] = "openrouter"
+    model: str = "anthropic/claude-sonnet-4"
+    api_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    api_key: str = ""
+    max_tokens: int = 16384
+    timeout_seconds: int = 120
+
+    @model_validator(mode="after")
+    def apply_env_overrides(self):
+        if self.provider == "openrouter":
+            if env_key := os.getenv("OPENROUTER_API_KEY"):
+                self.api_key = env_key
+        else:
+            if env_key := os.getenv("ANTHROPIC_API_KEY"):
+                self.api_key = env_key
+        return self
+
+
 class ExportConfig(BaseModel):
     enabled: bool = True
     format: Literal["csv", "json", "excel"] = "csv"
@@ -121,6 +151,7 @@ class AppConfig(BaseModel):
     marklines: MarklinesConfig = Field(default_factory=MarklinesConfig)
     fcai: FcaiConfig = Field(default_factory=FcaiConfig)
     http: HttpConfig = Field(default_factory=HttpConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -157,5 +188,6 @@ def load_config(
     Path(config.export.output_dir).mkdir(parents=True, exist_ok=True)
     Path(config.logging.file).parent.mkdir(parents=True, exist_ok=True)
     Path(config.fcai.download_dir).mkdir(parents=True, exist_ok=True)
+    Path(config.fcai.articles.image_download_dir).mkdir(parents=True, exist_ok=True)
 
     return config
