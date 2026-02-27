@@ -277,7 +277,10 @@ def run_marklines_update(config: AppConfig) -> MarklinesStepReport:
 # Step 2: FCAI Articles
 # ---------------------------------------------------------------------------
 
-def run_fcai_articles_update(config: AppConfig) -> FcaiArticlesStepReport:
+def run_fcai_articles_update(
+    config: AppConfig,
+    max_pages: int | None = None,
+) -> FcaiArticlesStepReport:
     """Fetch article listings, skip already-processed, process new articles."""
     from motor_vehicles.extraction.image_tables import (
         download_article_image,
@@ -296,7 +299,7 @@ def run_fcai_articles_update(config: AppConfig) -> FcaiArticlesStepReport:
     db = Database(config.database)
     try:
         # Fetch listings
-        listings = scraper.fetch_article_listings()
+        listings = scraper.fetch_article_listings(max_pages=max_pages)
         sales_urls = [
             listing.url for listing in listings
             if classify_sales_article(listing.title)
@@ -498,7 +501,10 @@ def run_state_sales_update(config: AppConfig) -> StateSalesStepReport:
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def run_monthly_update(config: AppConfig) -> UpdateReport:
+def run_monthly_update(
+    config: AppConfig,
+    max_pages: int | None = None,
+) -> UpdateReport:
     """Run all three update steps and return a complete report."""
     start = time.monotonic()
     report = UpdateReport(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -516,7 +522,7 @@ def run_monthly_update(config: AppConfig) -> UpdateReport:
     # Step 2: FCAI Articles
     logger.info("=== Step 2: FCAI Articles ===")
     try:
-        report.fcai_articles = run_fcai_articles_update(config)
+        report.fcai_articles = run_fcai_articles_update(config, max_pages=max_pages)
     except Exception as e:
         logger.error("FCAI articles step failed: %s", e, exc_info=True)
         report.errors.append(StepError(

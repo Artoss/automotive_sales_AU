@@ -19,6 +19,7 @@ Australian automotive sales data scraper from two sources.
 - Images extracted via Vision LLM (OpenRouter/Anthropic) to structured table data
 - State/territory sales breakdown derived from extracted tables
 - Article classification via keyword matching (`classify_sales_article()`)
+- **Categories**: "media-release" has recent articles (~2022+, 5 pages). "news" has historical articles back to 2005 (45+ pages). The `backfill` command searches both categories.
 
 ### FCAI PDFs (historical backfill)
 - **URL pattern**: `https://www.fcai.com.au/library/publication/{month}_{year}_vfacts_media_release_and_industry_summary.pdf`
@@ -45,13 +46,17 @@ Australian automotive sales data scraper from two sources.
 
 ```
 motor-vehicles update              # Monthly update (recommended for routine use)
+motor-vehicles update --max-pages 10  # Monthly update with deeper FCAI article pagination
+motor-vehicles backfill            # Historical backfill (full Marklines + multi-category FCAI articles)
+motor-vehicles backfill --max-pages 30  # Backfill with custom pagination depth per category (default: 20)
+motor-vehicles backfill --categories news  # Backfill from specific category only
 motor-vehicles marklines run       # Full Marklines pipeline (config-driven years)
 motor-vehicles marklines download  # Fetch and save Marklines HTML locally
 motor-vehicles marklines parse     # Parse saved HTML files (no DB)
 motor-vehicles fcai run            # Full FCAI PDF pipeline
 motor-vehicles fcai download       # Download FCAI PDFs
 motor-vehicles fcai parse          # Extract from downloaded PDFs (no DB)
-motor-vehicles fcai articles       # Article pipeline (--url, --list-only, --process-all)
+motor-vehicles fcai articles       # Article pipeline (--url, --list-only, --process-all, --max-pages)
 motor-vehicles fcai build-state-sales  # Extract state/territory data from article tables
 motor-vehicles run                 # Both Marklines + FCAI PDF pipelines
 motor-vehicles migrate             # Run SQL migrations

@@ -14,6 +14,8 @@ from motor_vehicles.update import (
     UpdateReport,
     _hash_pages,
     compute_marklines_years,
+    run_fcai_articles_update,
+    run_monthly_update,
 )
 
 
@@ -177,3 +179,23 @@ class TestHashPages:
         h = _hash_pages({})
         assert isinstance(h, str)
         assert len(h) == 64  # SHA-256 hex digest
+
+
+class TestMaxPagesSignature:
+    """Tests that max_pages parameter is accepted by update functions."""
+
+    def test_run_fcai_articles_update_accepts_max_pages(self):
+        """run_fcai_articles_update accepts max_pages parameter."""
+        import inspect
+        sig = inspect.signature(run_fcai_articles_update)
+        assert "max_pages" in sig.parameters
+        param = sig.parameters["max_pages"]
+        assert param.default is None
+
+    def test_run_monthly_update_accepts_max_pages(self):
+        """run_monthly_update accepts max_pages parameter."""
+        import inspect
+        sig = inspect.signature(run_monthly_update)
+        assert "max_pages" in sig.parameters
+        param = sig.parameters["max_pages"]
+        assert param.default is None

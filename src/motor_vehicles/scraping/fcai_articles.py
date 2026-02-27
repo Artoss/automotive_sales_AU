@@ -45,6 +45,18 @@ SALES_KEYWORDS = [
     "slow start for new", "solid vehicle",
     "record but outlook", "sales reflect",
     "sales reach one million",
+    # Historical title patterns (pre-2022)
+    "motor industry", "car market", "car sales",
+    "suv sales", "record year", "record month",
+    "record november", "record may", "record for",
+    "monthly sales record", "sales record",
+    "industry posts", "lifts sales",
+    "solid january", "solid start",
+    "first quarter new vehicle", "half year new vehicle",
+    "fuelled by suvs", "drive october",
+    "on target for a record", "pushes toward record",
+    "market on target", "ahead of record",
+    "buyer preferences", "car industry",
 ]
 
 # Titles containing these indicate non-vehicle-sales articles
@@ -264,6 +276,46 @@ class FcaiArticleScraper:
                 break
 
         return listings
+
+    def fetch_all_category_listings(
+        self,
+        categories: list[str] | None = None,
+        max_pages: int | None = None,
+    ) -> list[ArticleListing]:
+        """Fetch article listings across multiple categories, deduplicated by URL.
+
+        Used for backfill to reach historical articles filed under "news"
+        rather than "media-release".
+        """
+        if categories is None:
+            categories = self.articles_config.backfill_categories
+
+        seen_urls: set[str] = set()
+        all_listings: list[ArticleListing] = []
+
+        for category in categories:
+            logger.info("Fetching category: %s", category)
+            # Temporarily override listing_params for this category
+            original_params = self.articles_config.listing_params
+            self.articles_config.listing_params = {"_sft_category": category}
+            try:
+                cat_listings = self.fetch_article_listings(max_pages=max_pages)
+            finally:
+                self.articles_config.listing_params = original_params
+
+            for listing in cat_listings:
+                if listing.url not in seen_urls:
+                    seen_urls.add(listing.url)
+                    all_listings.append(listing)
+
+            logger.info(
+                "Category %s: %d articles (%d new after dedup)",
+                category, len(cat_listings),
+                len([l for l in cat_listings if l.url in seen_urls]),
+            )
+
+        logger.info("Total unique articles across categories: %d", len(all_listings))
+        return all_listings
 
 
 def _sanitize_url(url: str) -> str:

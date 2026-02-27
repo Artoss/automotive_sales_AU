@@ -9,7 +9,7 @@ marklines:
   historical_url_template: "https://www.marklines.com/en/statistics/flash_sales/salesfig_australia_{year}"
   # Recent years append -YYYY to base_url; old years use salesfig_australia_YYYY
   recent_years: [2025, 2024, 2023, 2022, 2021]
-  historical_years: [2020, 2019, 2018]
+  historical_years: [2020, 2019, 2018, 2017, 2016, 2015]
   use_browser_fallback: false
 
 # FCAI scope
@@ -35,6 +35,8 @@ fcai:
     listing_url: "https://www.fcai.com.au/news-and-media/"
     listing_params:
       _sft_category: "media-release"
+    # Backfill searches both media-release (recent) and news (historical back to 2005)
+    backfill_categories: ["media-release", "news"]
     max_pages: 5
     image_download_dir: "./data/fcai_images"
 

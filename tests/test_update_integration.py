@@ -665,3 +665,156 @@ class TestRunMonthlyUpdate:
         text = report.summary_text()
 
         assert "Content unchanged" in text
+
+    @patch("motor_vehicles.update.run_marklines_update")
+    @patch("motor_vehicles.update.run_fcai_articles_update")
+    @patch("motor_vehicles.update.run_state_sales_update")
+    @patch("motor_vehicles.update._run_quality_checks")
+    def test_max_pages_passed_to_fcai(
+        self, mock_quality, mock_state, mock_fcai, mock_marklines, mock_config,
+    ):
+        """max_pages parameter is forwarded to run_fcai_articles_update."""
+        mock_marklines.return_value = MarklinesStepReport()
+        mock_fcai.return_value = FcaiArticlesStepReport()
+        mock_state.return_value = StateSalesStepReport()
+        mock_quality.return_value = []
+
+        run_monthly_update(mock_config, max_pages=15)
+
+        mock_fcai.assert_called_once_with(mock_config, max_pages=15)
+
+    @patch("motor_vehicles.update.run_marklines_update")
+    @patch("motor_vehicles.update.run_fcai_articles_update")
+    @patch("motor_vehicles.update.run_state_sales_update")
+    @patch("motor_vehicles.update._run_quality_checks")
+    def test_max_pages_default_none(
+        self, mock_quality, mock_state, mock_fcai, mock_marklines, mock_config,
+    ):
+        """Default max_pages is None (uses config value)."""
+        mock_marklines.return_value = MarklinesStepReport()
+        mock_fcai.return_value = FcaiArticlesStepReport()
+        mock_state.return_value = StateSalesStepReport()
+        mock_quality.return_value = []
+
+        run_monthly_update(mock_config)
+
+        mock_fcai.assert_called_once_with(mock_config, max_pages=None)
+
+
+# ---------------------------------------------------------------------------
+# FCAI Articles max_pages passthrough tests
+# ---------------------------------------------------------------------------
+
+class TestFcaiArticlesMaxPages:
+    """Tests for max_pages parameter passthrough in run_fcai_articles_update."""
+
+    @patch(_P_CLASSIFY)
+    @patch(_P_FCAI_SCRAPER)
+    def test_max_pages_passed_to_fetch_listings(
+        self, MockScraper, mock_classify, mock_config,
+    ):
+        """max_pages is forwarded to scraper.fetch_article_listings()."""
+        from motor_vehicles.scraping.fcai_articles import ArticleListing
+
+        mock_scraper = MagicMock()
+        mock_scraper.fetch_article_listings.return_value = []
+        MockScraper.return_value = mock_scraper
+        mock_classify.return_value = False
+
+        run_fcai_articles_update(mock_config, max_pages=10)
+
+        mock_scraper.fetch_article_listings.assert_called_once_with(max_pages=10)
+
+    @patch(_P_CLASSIFY)
+    @patch(_P_FCAI_SCRAPER)
+    def test_max_pages_none_uses_default(
+        self, MockScraper, mock_classify, mock_config,
+    ):
+        """When max_pages is None, fetch_article_listings uses its default."""
+        mock_scraper = MagicMock()
+        mock_scraper.fetch_article_listings.return_value = []
+        MockScraper.return_value = mock_scraper
+        mock_classify.return_value = False
+
+        run_fcai_articles_update(mock_config)
+
+        mock_scraper.fetch_article_listings.assert_called_once_with(max_pages=None)
+
+
+# ---------------------------------------------------------------------------
+# Multi-category listing tests
+# ---------------------------------------------------------------------------
+
+class TestFetchAllCategoryListings:
+    """Tests for FcaiArticleScraper.fetch_all_category_listings."""
+
+    def test_deduplicates_across_categories(self, mock_config):
+        """Articles appearing in multiple categories are deduplicated."""
+        from motor_vehicles.scraping.fcai_articles import ArticleListing, FcaiArticleScraper
+
+        scraper = FcaiArticleScraper(mock_config.http, mock_config.fcai.articles)
+
+        # Mock fetch_article_listings to return overlapping results
+        call_count = 0
+        def mock_fetch(max_pages=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [
+                    ArticleListing(url="http://fcai.com/a", title="Article A"),
+                    ArticleListing(url="http://fcai.com/b", title="Article B"),
+                ]
+            else:
+                return [
+                    ArticleListing(url="http://fcai.com/b", title="Article B"),  # duplicate
+                    ArticleListing(url="http://fcai.com/c", title="Article C"),
+                ]
+
+        scraper.fetch_article_listings = mock_fetch
+
+        results = scraper.fetch_all_category_listings(
+            categories=["media-release", "news"], max_pages=5,
+        )
+
+        assert len(results) == 3
+        urls = [r.url for r in results]
+        assert urls == ["http://fcai.com/a", "http://fcai.com/b", "http://fcai.com/c"]
+
+    def test_uses_config_categories_by_default(self, mock_config):
+        """Uses backfill_categories from config when categories not specified."""
+        from motor_vehicles.scraping.fcai_articles import FcaiArticleScraper
+
+        scraper = FcaiArticleScraper(mock_config.http, mock_config.fcai.articles)
+
+        categories_seen = []
+        original_fetch = scraper.fetch_article_listings
+        def mock_fetch(max_pages=None):
+            # Record which category params are set at call time
+            categories_seen.append(
+                scraper.articles_config.listing_params.get("_sft_category")
+            )
+            return []
+
+        scraper.fetch_article_listings = mock_fetch
+        scraper.fetch_all_category_listings()
+
+        assert categories_seen == ["media-release", "news"]
+
+    def test_restores_listing_params_after_fetch(self, mock_config):
+        """listing_params are restored even if fetch raises."""
+        from motor_vehicles.scraping.fcai_articles import FcaiArticleScraper
+
+        scraper = FcaiArticleScraper(mock_config.http, mock_config.fcai.articles)
+        original_params = dict(scraper.articles_config.listing_params)
+
+        def mock_fetch(max_pages=None):
+            raise ConnectionError("test")
+
+        scraper.fetch_article_listings = mock_fetch
+
+        try:
+            scraper.fetch_all_category_listings(categories=["news"])
+        except ConnectionError:
+            pass
+
+        assert scraper.articles_config.listing_params == original_params

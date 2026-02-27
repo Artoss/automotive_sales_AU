@@ -24,6 +24,7 @@
 - [x] Marklines incremental mode (content hash comparison via `scrape_runs.content_hash` column, migration 006)
 - [x] Mock-based integration tests for update orchestration (20 tests covering all steps, error handling, skip logic)
 - [x] Database migrations (6 numbered SQL files)
+- [x] Historical coverage expansion: Marklines extended to 2015, FCAI articles `--max-pages` option, `backfill` command
 
 ## Short-term
 
@@ -32,8 +33,8 @@ _(All short-term items completed.)_
 ## Long-term
 
 ### Historical coverage expansion
-- Extend Marklines scraping to pre-2018 if data is available
-- Backfill FCAI articles beyond current listing pagination depth
+- [x] Extend Marklines scraping to pre-2018 (config now includes 2015-2017)
+- [x] Backfill FCAI articles beyond current listing pagination depth (`--max-pages` on `update`, `fcai articles`, and `backfill` commands)
 - Consolidate PDF and article pipelines into a unified FCAI time-series
 
 ### Dashboard / visualization layer

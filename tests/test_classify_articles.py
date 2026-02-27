@@ -85,6 +85,41 @@ class TestClassifySalesArticle:
     def test_empty_title(self):
         assert not classify_sales_article("")
 
+    # --- Historical title patterns (pre-2022) ---
+
+    def test_car_market_ahead_of_record(self):
+        assert classify_sales_article("September Keeps Car Market Ahead of Record")
+
+    def test_motor_industry_record(self):
+        assert classify_sales_article("July Record for Motor Industry")
+
+    def test_monthly_sales_record(self):
+        assert classify_sales_article("Motor Industry Posts Monthly sales Record")
+
+    def test_record_may_lifts(self):
+        assert classify_sales_article("Record May Lifts sales Across All States")
+
+    def test_suv_sales_overtake(self):
+        assert classify_sales_article("Suv sales Overtake Passenger Cars for First Time Ever")
+
+    def test_solid_january_start(self):
+        assert classify_sales_article("Solid January Start Follows Industry's Record Year")
+
+    def test_car_sales_growth(self):
+        assert classify_sales_article("Car sales Growth Fuelled by Suvs and Light Commercials")
+
+    def test_record_year_for_2016(self):
+        assert classify_sales_article("Record sales Year for 2016 Flags Dramatic Shift in Buyer Preferences")
+
+    def test_on_target_for_record(self):
+        assert classify_sales_article("Market on Target for a Record Year")
+
+    def test_car_industry_smashes(self):
+        assert classify_sales_article("Car Industry Smashes All-Time sales Records in June")
+
+    def test_first_quarter_new_vehicle(self):
+        assert classify_sales_article("First Quarter New Vehicle sales Result")
+
     # --- Edge cases: exclude takes precedence ---
 
     def test_exclude_overrides_include(self):

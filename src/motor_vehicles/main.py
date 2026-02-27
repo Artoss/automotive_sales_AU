@@ -129,11 +129,12 @@ def fcai_run(ctx, year, month):
 @click.option("--url", help="Process a single article URL")
 @click.option("--list-only", is_flag=True, help="List article URLs without processing")
 @click.option("--process-all", is_flag=True, help="Process all monthly sales articles")
+@click.option("--max-pages", type=int, help="Override max listing pages to fetch")
 @click.pass_context
-def fcai_articles(ctx, url, list_only, process_all):
+def fcai_articles(ctx, url, list_only, process_all, max_pages):
     """Scrape FCAI media release articles for table images."""
     config: AppConfig = ctx.obj["config"]
-    _fcai_articles(config, url=url, list_only=list_only, process_all=process_all)
+    _fcai_articles(config, url=url, list_only=list_only, process_all=process_all, max_pages=max_pages)
 
 
 @fcai.command(name="build-state-sales")
@@ -173,11 +174,23 @@ def status(ctx):
 
 
 @cli.command()
+@click.option("--max-pages", type=int, help="Override max listing pages for FCAI articles")
 @click.pass_context
-def update(ctx):
+def update(ctx, max_pages):
     """Monthly update: fetch new data, process, report coverage."""
     config: AppConfig = ctx.obj["config"]
-    _run_monthly_update(config)
+    _run_monthly_update(config, max_pages=max_pages)
+
+
+@cli.command()
+@click.option("--max-pages", type=int, default=20, help="Max listing pages per category (default: 20)")
+@click.option("--categories", help="Comma-separated categories to search (default: media-release,news)")
+@click.pass_context
+def backfill(ctx, max_pages, categories):
+    """Historical backfill: full Marklines + deep FCAI article pagination."""
+    config: AppConfig = ctx.obj["config"]
+    cat_list = categories.split(",") if categories else None
+    _run_backfill(config, max_pages=max_pages, categories=cat_list)
 
 
 @cli.command(name="export")
@@ -446,6 +459,7 @@ def _fcai_articles(
     url: str | None = None,
     list_only: bool = False,
     process_all: bool = False,
+    max_pages: int | None = None,
 ) -> None:
     """Scrape FCAI media release articles for table images."""
     from motor_vehicles.extraction.image_tables import (
@@ -463,7 +477,7 @@ def _fcai_articles(
 
     if list_only:
         click.echo("Fetching article listings...")
-        listings = scraper.fetch_article_listings()
+        listings = scraper.fetch_article_listings(max_pages=max_pages)
         sales_count = 0
         for listing in listings:
             is_sales = classify_sales_article(listing.title)
@@ -480,7 +494,7 @@ def _fcai_articles(
     urls_to_process: list[str] = []
     if process_all:
         click.echo("Fetching article listings...")
-        listings = scraper.fetch_article_listings()
+        listings = scraper.fetch_article_listings(max_pages=max_pages)
         for listing in listings:
             if classify_sales_article(listing.title):
                 urls_to_process.append(listing.url)
@@ -839,7 +853,7 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
         db.close()
 
 
-def _run_monthly_update(config: AppConfig) -> None:
+def _run_monthly_update(config: AppConfig, max_pages: int | None = None) -> None:
     """Run monthly update and print report."""
     import json as json_mod
 
@@ -848,7 +862,7 @@ def _run_monthly_update(config: AppConfig) -> None:
 
     click.echo("=== Monthly Update ===")
     try:
-        report = run_monthly_update(config)
+        report = run_monthly_update(config, max_pages=max_pages)
     except Exception as e:
         notify_update_failure(e, step="orchestrator")
         raise
@@ -875,3 +889,165 @@ def _run_monthly_update(config: AppConfig) -> None:
         )
     else:
         notify_update_success(summary)
+
+
+def _run_backfill(
+    config: AppConfig,
+    max_pages: int = 20,
+    categories: list[str] | None = None,
+) -> None:
+    """Historical backfill: full Marklines pipeline + deep FCAI article pagination."""
+    from motor_vehicles.extraction.image_tables import (
+        download_article_image,
+        extract_tables_from_image,
+    )
+    from motor_vehicles.scraping.fcai_articles import (
+        FcaiArticleScraper,
+        classify_sales_article,
+    )
+    from motor_vehicles.storage.database import Database
+    from motor_vehicles.storage.loader import load_fcai_article
+
+    cat_names = ", ".join(categories or config.fcai.articles.backfill_categories)
+    click.echo("=== Historical Backfill ===")
+    click.echo(f"FCAI max pages per category: {max_pages}")
+    click.echo(f"FCAI categories: {cat_names}")
+    click.echo()
+
+    # Step 1: Full Marklines pipeline (uses all configured years including historical)
+    click.echo("--- Step 1: Marklines (full config-driven pipeline) ---")
+    try:
+        _marklines_full(config)
+    except Exception as e:
+        click.echo(f"Marklines failed: {e}")
+
+    click.echo()
+
+    # Step 2: FCAI Articles with multi-category deep pagination
+    click.echo(f"--- Step 2: FCAI Articles (multi-category backfill) ---")
+    scraper = FcaiArticleScraper(config.http, config.fcai.articles)
+    db = Database(config.database)
+    try:
+        # Fetch from all categories
+        click.echo("Fetching article listings across categories...")
+        listings = scraper.fetch_all_category_listings(
+            categories=categories, max_pages=max_pages,
+        )
+        sales_urls = [
+            listing.url for listing in listings
+            if classify_sales_article(listing.title)
+        ]
+        click.echo(f"Found {len(listings)} total articles, {len(sales_urls)} sales articles")
+
+        # Connect to DB and filter already-processed
+        db.connect()
+        db.ensure_schema("migrations")
+        existing_urls = db.get_existing_article_urls()
+        new_urls = [u for u in sales_urls if u not in existing_urls]
+        click.echo(f"New articles to process: {new_urls.__len__()} (skipping {len(sales_urls) - len(new_urls)} already processed)")
+
+        if not new_urls:
+            click.echo("No new articles to process.")
+        else:
+            run_id = db.start_run(source="fcai_backfill", config_hash=config.config_hash())
+            grand_total_images = 0
+            grand_total_tables = 0
+
+            for art_idx, art_url in enumerate(new_urls):
+                click.echo(f"\n{'='*60}")
+                click.echo(f"Article {art_idx + 1}/{len(new_urls)}: {art_url}")
+
+                try:
+                    article = scraper.fetch_article(art_url)
+                except Exception as e:
+                    logger.error("Failed to fetch article %s: %s", art_url, e, exc_info=True)
+                    click.echo(f"  [ERROR] Failed to fetch: {e}")
+                    continue
+
+                click.echo(f"  Title: {article.title}")
+                click.echo(f"  Year: {article.year}, Month: {article.month}")
+                click.echo(f"  Images: {len(article.image_urls)}, HTML tables: {len(article.html_tables)}")
+
+                images: list[dict] = []
+                extracted_tables: dict[int, list[dict]] = {}
+                total_tables = 0
+
+                if article.image_urls:
+                    download_dir = config.fcai.articles.image_download_dir
+                    for idx, img_url in enumerate(article.image_urls):
+                        label = article.image_labels[idx] if idx < len(article.image_labels) else ""
+                        try:
+                            filepath = download_article_image(scraper._client, img_url, download_dir)
+                            filename = img_url.split("/")[-1].split("?")[0]
+                            images.append({
+                                "image_url": img_url,
+                                "image_filename": filename,
+                                "local_path": str(filepath),
+                                "image_order": idx,
+                                "image_label": label,
+                            })
+                            tables = extract_tables_from_image(filepath, config.vision)
+                            extracted_tables[idx] = tables
+                            total_tables += len(tables)
+                        except Exception as e:
+                            logger.error("Failed to process image %s: %s", img_url, e, exc_info=True)
+                            click.echo(f"    [ERROR] Image: {e}")
+                elif article.html_tables:
+                    for idx, html_table in enumerate(article.html_tables):
+                        if html_table.get("rows"):
+                            extracted_tables[idx] = [{
+                                "headers": html_table["headers"],
+                                "rows": html_table["rows"],
+                                "dataframe_csv": "",
+                                "table_index": idx,
+                                "extraction_method": "html_table",
+                                "confidence": 0.95,
+                            }]
+                            total_tables += 1
+                else:
+                    click.echo("  No images or HTML tables, skipping.")
+                    continue
+
+                article_dict = {
+                    "url": article.url,
+                    "slug": article.slug,
+                    "title": article.title,
+                    "published_date": str(article.published_date) if article.published_date else None,
+                    "year": article.year,
+                    "month": article.month,
+                    "article_text": article.body_text,
+                    "is_sales_article": article.is_sales_article,
+                }
+                load_fcai_article(db, run_id, article_dict, images, extracted_tables)
+                grand_total_images += len(images)
+                grand_total_tables += total_tables
+                click.echo(f"  Loaded: {len(images)} images, {total_tables} tables")
+
+                if art_idx < len(new_urls) - 1:
+                    scraper._delay()
+
+            db.finish_run(run_id, status="completed", records_count=grand_total_tables)
+            click.echo(
+                f"\n{'='*60}"
+                f"\nFCAI backfill complete: {len(new_urls)} articles, "
+                f"{grand_total_images} images, {grand_total_tables} tables (run #{run_id})"
+            )
+
+    except Exception as e:
+        logger.error("FCAI backfill failed: %s", e, exc_info=True)
+        click.echo(f"FCAI backfill failed: {e}")
+    finally:
+        scraper.close()
+        db.close()
+
+    click.echo()
+
+    # Step 3: State sales extraction
+    click.echo("--- Step 3: State/Territory Sales ---")
+    try:
+        _fcai_build_state_sales(config)
+    except Exception as e:
+        click.echo(f"State sales failed: {e}")
+
+    click.echo()
+    click.echo("=== Backfill complete ===")

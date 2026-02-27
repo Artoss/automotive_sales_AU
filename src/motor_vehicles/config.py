@@ -33,6 +33,10 @@ class FcaiArticlesConfig(BaseModel):
     """FCAI article-based scraping scope."""
     listing_url: str = "https://www.fcai.com.au/news-and-media/"
     listing_params: dict[str, str] = {"_sft_category": "media-release"}
+    backfill_categories: list[str] = Field(
+        default=["media-release", "news"],
+        description="Categories to search during backfill (news has historical articles back to 2005)",
+    )
     max_pages: int = 5
     image_download_dir: str = "./data/fcai_images"
 
