@@ -12,20 +12,19 @@ Australian automotive sales data scraper from two sources.
 - Vehicle type breakdown (passenger, SUV, light/heavy commercial)
 - Monthly commentary text from flash reports
 - Tables parsed with BeautifulSoup; odd-indexed tables contain data rows
+- **Coverage**: Feb 2014 - present (143+ months)
 
 ### FCAI Articles (HTML + Vision LLM)
 - **Listing URL**: `https://www.fcai.com.au/news-and-media/?_sft_category=media-release`
 - Monthly media release articles with embedded table images
 - Images extracted via Vision LLM (OpenRouter/Anthropic) to structured table data
-- State/territory sales breakdown derived from extracted tables
+- State/territory sales breakdown derived from extracted tables (Oct 2024+)
 - Article classification via keyword matching (`classify_sales_article()`)
 - **Categories**: "media-release" has recent articles (~2022+, 5 pages). "news" has historical articles back to 2005 (45+ pages). The `backfill` command searches both categories.
+- **Coverage**: Sep 2020 - present (57 articles with extracted tables)
 
-### FCAI PDFs (historical backfill)
-- **URL pattern**: `https://www.fcai.com.au/library/publication/{month}_{year}_vfacts_media_release_and_industry_summary.pdf`
-- Monthly PDFs with sales by make/model/segment
-- Segmentation: passenger, SUV, light commercial, heavy commercial
-- Used for historical backfill only; articles pipeline is preferred for ongoing updates
+### FCAI PDFs (retired)
+- **Status**: Retired. The articles pipeline supersedes PDFs with better coverage and state/territory breakdowns. CLI commands remain for reference but are not actively maintained. `fcai_sales_data` table has 0 records.
 
 ## Database
 
@@ -35,8 +34,8 @@ Australian automotive sales data scraper from two sources.
   - `marklines_sales` - monthly sales by make (unique on year/month/make)
   - `marklines_vehicle_type_sales` - vehicle type breakdown (unique on year/month/vehicle_type)
   - `marklines_commentary` - monthly report commentary (unique on year/month)
-  - `fcai_publications` - PDF publication metadata (unique on year/month/filename)
-  - `fcai_sales_data` - sales from PDFs (unique on year/month/make/model/segment)
+  - `fcai_publications` - PDF publication metadata (retired, 0 records)
+  - `fcai_sales_data` - sales from PDFs (retired, 0 records)
   - `fcai_articles` - article metadata (unique on url)
   - `fcai_article_images` - images from articles (unique on article_id/image_url)
   - `fcai_article_extracted_tables` - Vision LLM extracted tables (unique on image_id/table_index)
@@ -53,12 +52,12 @@ motor-vehicles backfill --categories news  # Backfill from specific category onl
 motor-vehicles marklines run       # Full Marklines pipeline (config-driven years)
 motor-vehicles marklines download  # Fetch and save Marklines HTML locally
 motor-vehicles marklines parse     # Parse saved HTML files (no DB)
-motor-vehicles fcai run            # Full FCAI PDF pipeline
-motor-vehicles fcai download       # Download FCAI PDFs
-motor-vehicles fcai parse          # Extract from downloaded PDFs (no DB)
+motor-vehicles fcai run            # Full FCAI PDF pipeline (retired)
+motor-vehicles fcai download       # Download FCAI PDFs (retired)
+motor-vehicles fcai parse          # Extract from downloaded PDFs (retired)
 motor-vehicles fcai articles       # Article pipeline (--url, --list-only, --process-all, --max-pages)
 motor-vehicles fcai build-state-sales  # Extract state/territory data from article tables
-motor-vehicles run                 # Both Marklines + FCAI PDF pipelines
+motor-vehicles run                 # Both Marklines + FCAI PDF pipelines (PDF portion retired)
 motor-vehicles migrate             # Run SQL migrations
 motor-vehicles status              # Show scrape history and DB stats
 motor-vehicles export              # Export to CSV/JSON/Excel (--source, --format)
@@ -74,7 +73,7 @@ Run `uv run motor-vehicles update` for routine monthly updates.
 3. **State Sales** - Re-extracts state/territory time-series from all article tables (idempotent upserts)
 4. **Quality Checks** - Validates totals vs sums, flags anomalous record counts, checks for duplicate articles
 
-**No config changes needed** - the update command dynamically determines which years to fetch based on the current date. The FCAI PDF pipeline is excluded (articles cover the same data plus state breakdowns). PDFs remain available via `fcai run` for historical backfill.
+**No config changes needed** - the update command dynamically determines which years to fetch based on the current date. The FCAI PDF pipeline is retired (articles cover the same data plus state/territory breakdowns).
 
 **Coverage gaps** in the report indicate months where no state/territory data was extracted between the first and last available months. Check FCAI media releases manually: `https://www.fcai.com.au/news-and-media/`
 
@@ -104,4 +103,5 @@ Run `uv run motor-vehicles update` for routine monthly updates.
 
 - **Name**: `motor-vehicles` (CLI) / `motor_vehicles` (Python)
 - **Entry point**: `motor_vehicles.main:cli`
-- **Roadmap**: See `ROADMAP.md` for planned work and future direction
+- **Test suite**: 169 tests (pytest), excludes live DB tests
+- **Roadmap**: See `ROADMAP.md` for status and parked future ideas

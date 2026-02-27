@@ -4,38 +4,37 @@
 
 - [x] Marklines HTML scraper (fetch, parse, load by make + vehicle type + commentary)
 - [x] Marklines browser fallback via Playwright (optional, config toggle)
-- [x] FCAI PDF pipeline (download, pdfplumber extraction, load by make/model/segment)
-- [x] FCAI article scraper (listing pagination, sales article classification)
+- [x] FCAI PDF pipeline (download, pdfplumber extraction, load by make/model/segment) -- retired, superseded by articles pipeline
+- [x] FCAI article scraper (listing pagination, sales article classification, multi-category backfill)
 - [x] Vision LLM table extraction from article images (OpenRouter + Anthropic providers)
 - [x] State/territory time-series derived from extracted article tables
 - [x] Monthly `update` command with dynamic year scope and skip-processed logic
 - [x] Structured Pydantic report models from update (JSON export, `summary_text()`)
-- [x] CSV, JSON, and Excel export (`--format csv|json|excel`)
-- [x] Database migrations (5 numbered SQL files)
-- [x] Core test suite (parser, catalog, PDF extraction, live DB integration)
+- [x] CSV, JSON, and Excel export (`--format csv|json|excel`) -- includes marklines_sales, fcai_extracted_tables, fcai_state_sales
+- [x] Database migrations (6 numbered SQL files)
+- [x] Core test suite (169 tests: parser, catalog, classification, state sales, update orchestration, quality, notifications)
 - [x] Fix Marklines current-year URL routing (current page covers current year; only fetch previous year)
-- [x] FCAI PDF incremental mode (`--mode incremental` skips unchanged files by hash comparison)
-- [x] Tests for update module, state sales extraction, and article classification (63 new tests)
+- [x] Marklines incremental mode (content hash comparison via `scrape_runs.content_hash` column)
+- [x] FCAI article HTML table fallback (extracts `<table>` elements when no images present)
 - [x] Slack notifications via webhook (no-op when `SLACK_WEBHOOK_URL` not set)
 - [x] Prefect flow integration (`prefect_flow.py` with cron scheduling, optional dependency)
 - [x] Data quality checks (totals cross-check, anomalous counts, state sum validation, duplicate articles)
-- [x] FCAI article HTML table fallback (extracts `<table>` elements when no images present)
-- [x] Tests for quality checks, notifications, and HTML table extraction (19 new tests, 123 total)
-- [x] Marklines incremental mode (content hash comparison via `scrape_runs.content_hash` column, migration 006)
-- [x] Mock-based integration tests for update orchestration (20 tests covering all steps, error handling, skip logic)
-- [x] Database migrations (6 numbered SQL files)
-- [x] Historical coverage expansion: Marklines extended to 2015, FCAI articles `--max-pages` option, `backfill` command
+- [x] Historical coverage expansion: Marklines extended to 2014, FCAI articles back to 2005 via multi-category backfill
+- [x] `backfill` command with `--max-pages` and `--categories` options
 
-## Short-term
+## Current Data Coverage (as of Feb 2026)
 
-_(All short-term items completed.)_
+| Source | Range | Records | Notes |
+|--------|-------|---------|-------|
+| Marklines sales | Feb 2014 - Jan 2026 | 1,678 | By manufacturer, monthly. Gap: Dec 2014 |
+| FCAI articles | Sep 2020 - Jan 2026 | 57 | All with extracted tables. ~6 scattered month gaps |
+| FCAI state sales | Oct 2024 - Jan 2026 | 126 | 8 states + total. Gap: Aug 2025 |
 
-## Long-term
+## Retired
 
-### Historical coverage expansion
-- [x] Extend Marklines scraping to pre-2018 (config now includes 2015-2017)
-- [x] Backfill FCAI articles beyond current listing pagination depth (`--max-pages` on `update`, `fcai articles`, and `backfill` commands)
-- Consolidate PDF and article pipelines into a unified FCAI time-series
+- **FCAI PDF pipeline** (`fcai run`, `fcai download`, `fcai parse`) -- the articles pipeline covers the same data with better state/territory breakdowns. PDF commands remain in CLI for reference but `fcai_sales_data` table has 0 records. No further development planned.
+
+## Parked (future ideas)
 
 ### Dashboard / visualization layer
 - Expose data via a lightweight API (FastAPI) or static site
