@@ -56,27 +56,35 @@ motor-vehicles fcai build-state-sales  # Extract state/territory data from artic
 motor-vehicles run                 # Both Marklines + FCAI PDF pipelines
 motor-vehicles migrate             # Run SQL migrations
 motor-vehicles status              # Show scrape history and DB stats
-motor-vehicles export              # Export to CSV (--source marklines/fcai/all)
+motor-vehicles export              # Export to CSV/JSON/Excel (--source, --format)
 ```
 
 ## Monthly Update Process
 
 Run `uv run motor-vehicles update` for routine monthly updates.
 
-**What it does (3 steps):**
+**What it does (4 steps):**
 1. **Marklines** - Fetches current + previous year pages (dynamically scoped, no config changes needed)
-2. **FCAI Articles** - Fetches article listings, skips already-processed URLs, processes only new articles via Vision LLM extraction
+2. **FCAI Articles** - Fetches article listings, skips already-processed URLs, processes new articles via Vision LLM or HTML table fallback
 3. **State Sales** - Re-extracts state/territory time-series from all article tables (idempotent upserts)
+4. **Quality Checks** - Validates totals vs sums, flags anomalous record counts, checks for duplicate articles
 
 **No config changes needed** - the update command dynamically determines which years to fetch based on the current date. The FCAI PDF pipeline is excluded (articles cover the same data plus state breakdowns). PDFs remain available via `fcai run` for historical backfill.
 
 **Coverage gaps** in the report indicate months where no state/territory data was extracted between the first and last available months. Check FCAI media releases manually: `https://www.fcai.com.au/news-and-media/`
 
-**JSON report** is saved to `exports/update_report_{timestamp}.json` for programmatic consumption. The `run_monthly_update()` function in `update.py` returns a Pydantic model directly for future Prefect/Slack integration.
+**JSON report** is saved to `exports/update_report_{timestamp}.json` for programmatic consumption. The `run_monthly_update()` function in `update.py` returns a Pydantic model directly, suitable for Prefect flow integration.
+
+**Slack notifications** are sent automatically if `SLACK_WEBHOOK_URL` is set in `.env`. Success posts the summary; failure posts the error and step name. No-op when not configured.
+
+**Prefect scheduling** (optional): `uv run python -m motor_vehicles.prefect_flow --serve` starts a cron-scheduled flow (5th of each month). Requires `pip install motor-vehicles[prefect]`.
 
 ## Key Modules
 
 - `update.py` - Monthly update orchestrator (pure Python, no Click dependency, returns Pydantic report models)
+- `quality.py` - Data quality checks (totals cross-check, anomaly detection, duplicate detection)
+- `notify.py` - Slack webhook notifications (graceful no-op if not configured)
+- `prefect_flow.py` - Prefect flow wrapping update steps as tasks (optional dependency)
 - `main.py` - Click CLI entry point and command implementations
 - `config.py` - AppConfig (Pydantic v2) + YAML/.env loader
 - `scraping/marklines_client.py` - httpx fetcher with tenacity retry

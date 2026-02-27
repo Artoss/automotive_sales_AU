@@ -79,6 +79,7 @@ class ArticleDetail:
     body_text: str = ""
     image_urls: list[str] = field(default_factory=list)
     image_labels: list[str] = field(default_factory=list)
+    html_tables: list[dict] = field(default_factory=list)
     is_sales_article: bool = False
 
 
@@ -167,6 +168,12 @@ class FcaiArticleScraper:
                         label = _find_image_label(img)
                         image_labels.append(label)
 
+        # Extract HTML tables from body
+        html_tables: list[dict] = []
+        if body_el:
+            for table_el in body_el.find_all("table"):
+                html_tables.append(_parse_html_table(table_el))
+
         # Infer year/month from title and published_date
         year, month = _infer_year_month(title, published_date)
 
@@ -183,6 +190,7 @@ class FcaiArticleScraper:
             body_text=body_text,
             image_urls=image_urls,
             image_labels=image_labels,
+            html_tables=html_tables,
             is_sales_article=is_sales,
         )
 
@@ -342,6 +350,43 @@ def _find_image_label(img_tag) -> str:
                     break
 
     return ""
+
+
+def _parse_html_table(table_el) -> dict:
+    """Extract headers and row data from an HTML <table> element.
+
+    Returns a dict with:
+        headers: list[str]
+        rows: list[list[str]]
+    """
+    headers: list[str] = []
+    rows: list[list[str]] = []
+
+    # Extract headers from <thead> or first <tr> with <th>
+    thead = table_el.find("thead")
+    if thead:
+        for th in thead.find_all("th"):
+            headers.append(th.get_text(strip=True))
+    else:
+        first_row = table_el.find("tr")
+        if first_row:
+            ths = first_row.find_all("th")
+            if ths:
+                headers = [th.get_text(strip=True) for th in ths]
+
+    # Extract data rows from <tbody> or all <tr> elements
+    tbody = table_el.find("tbody") or table_el
+    for tr in tbody.find_all("tr"):
+        cells = tr.find_all(["td", "th"])
+        if not cells:
+            continue
+        row = [cell.get_text(strip=True) for cell in cells]
+        # Skip rows that are all headers (already captured)
+        if row == headers:
+            continue
+        rows.append(row)
+
+    return {"headers": headers, "rows": rows}
 
 
 def _infer_year_month(title: str, published_date: date | None) -> tuple[int | None, int | None]:

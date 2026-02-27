@@ -31,6 +31,9 @@ dev = [
 browser = [
     "playwright>=1.40",
 ]
+prefect = [
+    "prefect>=3.0",
+]
 
 [project.scripts]
 motor-vehicles = "motor_vehicles.main:cli"

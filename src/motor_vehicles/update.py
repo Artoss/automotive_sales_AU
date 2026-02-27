@@ -70,6 +70,7 @@ class UpdateReport(BaseModel):
     marklines: MarklinesStepReport | None = None
     fcai_articles: FcaiArticlesStepReport | None = None
     state_sales: StateSalesStepReport | None = None
+    quality_issues: list[dict] = Field(default_factory=list)
     errors: list[StepError] = Field(default_factory=list)
     duration_seconds: float = 0.0
 
@@ -115,6 +116,13 @@ class UpdateReport(BaseModel):
             lines.append(f"  Records upserted: {s.records_upserted}")
             if s.coverage_gaps:
                 lines.append(f"  Coverage gaps:    {', '.join(s.coverage_gaps)}")
+            lines.append("")
+
+        if self.quality_issues:
+            lines.append("--- Quality Checks ---")
+            for issue in self.quality_issues:
+                icon = "ERROR" if issue.get("severity") == "error" else "WARN"
+                lines.append(f"  [{icon}] {issue['check']}: {issue['message']}")
             lines.append("")
 
         if self.errors:
@@ -299,41 +307,59 @@ def run_fcai_articles_update(config: AppConfig) -> FcaiArticlesStepReport:
                 ))
                 continue
 
-            if not article.image_urls:
-                logger.info("Article %s has no images, skipping", art_url)
-                continue
-
-            # Download images and extract tables
-            download_dir = config.fcai.articles.image_download_dir
             images: list[dict] = []
             extracted_tables: dict[int, list[dict]] = {}
             article_tables = 0
 
-            for idx, img_url in enumerate(article.image_urls):
-                label = article.image_labels[idx] if idx < len(article.image_labels) else ""
-                try:
-                    filepath = download_article_image(scraper._client, img_url, download_dir)
-                    filename = img_url.split("/")[-1].split("?")[0]
+            if article.image_urls:
+                # Primary path: download images and extract tables via Vision LLM
+                download_dir = config.fcai.articles.image_download_dir
 
-                    images.append({
-                        "image_url": img_url,
-                        "image_filename": filename,
-                        "local_path": str(filepath),
-                        "image_order": idx,
-                        "image_label": label,
-                    })
+                for idx, img_url in enumerate(article.image_urls):
+                    label = article.image_labels[idx] if idx < len(article.image_labels) else ""
+                    try:
+                        filepath = download_article_image(scraper._client, img_url, download_dir)
+                        filename = img_url.split("/")[-1].split("?")[0]
 
-                    tables = extract_tables_from_image(filepath, config.vision)
-                    extracted_tables[idx] = tables
-                    article_tables += len(tables)
+                        images.append({
+                            "image_url": img_url,
+                            "image_filename": filename,
+                            "local_path": str(filepath),
+                            "image_order": idx,
+                            "image_label": label,
+                        })
 
-                except Exception as e:
-                    logger.error("Failed to process image %s: %s", img_url, e, exc_info=True)
-                    report.errors.append(StepError(
-                        source="fcai_articles",
-                        message=f"Image processing failed: {e}",
-                        detail=img_url,
-                    ))
+                        tables = extract_tables_from_image(filepath, config.vision)
+                        extracted_tables[idx] = tables
+                        article_tables += len(tables)
+
+                    except Exception as e:
+                        logger.error("Failed to process image %s: %s", img_url, e, exc_info=True)
+                        report.errors.append(StepError(
+                            source="fcai_articles",
+                            message=f"Image processing failed: {e}",
+                            detail=img_url,
+                        ))
+            elif article.html_tables:
+                # Fallback: extract structured data from HTML tables in article body
+                logger.info(
+                    "Article %s has no images but %d HTML tables, using fallback",
+                    art_url, len(article.html_tables),
+                )
+                for idx, html_table in enumerate(article.html_tables):
+                    if html_table.get("rows"):
+                        extracted_tables[idx] = [{
+                            "headers": html_table["headers"],
+                            "rows": html_table["rows"],
+                            "dataframe_csv": "",
+                            "table_index": idx,
+                            "extraction_method": "html_table",
+                            "confidence": 0.95,
+                        }]
+                        article_tables += 1
+            else:
+                logger.info("Article %s has no images or HTML tables, skipping", art_url)
+                continue
 
             # Load to database
             article_dict = {
@@ -482,5 +508,27 @@ def run_monthly_update(config: AppConfig) -> UpdateReport:
             source="state_sales", message=f"Step failed: {e}",
         ))
 
+    # Step 4: Quality Checks
+    logger.info("=== Step 4: Quality Checks ===")
+    try:
+        report.quality_issues = _run_quality_checks(config)
+    except Exception as e:
+        logger.error("Quality checks failed: %s", e, exc_info=True)
+        # Non-fatal: don't append to errors, just log
+
     report.duration_seconds = round(time.monotonic() - start, 2)
     return report
+
+
+def _run_quality_checks(config: AppConfig) -> list[dict]:
+    """Run quality checks and return serializable issue list."""
+    from motor_vehicles.quality import run_quality_checks
+    from motor_vehicles.storage.database import Database
+
+    db = Database(config.database)
+    try:
+        db.connect()
+        qr = run_quality_checks(db)
+        return [issue.model_dump() for issue in qr.issues]
+    finally:
+        db.close()

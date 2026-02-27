@@ -843,11 +843,18 @@ def _run_monthly_update(config: AppConfig) -> None:
     """Run monthly update and print report."""
     import json as json_mod
 
+    from motor_vehicles.notify import notify_update_failure, notify_update_success
     from motor_vehicles.update import run_monthly_update
 
     click.echo("=== Monthly Update ===")
-    report = run_monthly_update(config)
-    click.echo(report.summary_text())
+    try:
+        report = run_monthly_update(config)
+    except Exception as e:
+        notify_update_failure(e, step="orchestrator")
+        raise
+
+    summary = report.summary_text()
+    click.echo(summary)
 
     # Write JSON report to exports
     out_dir = Path(config.export.output_dir)
@@ -859,3 +866,12 @@ def _run_monthly_update(config: AppConfig) -> None:
         encoding="utf-8",
     )
     click.echo(f"\nReport saved to {json_path}")
+
+    # Slack notification (no-op if webhook not configured)
+    if report.errors:
+        notify_update_failure(
+            RuntimeError(f"{len(report.errors)} step error(s)"),
+            step="update",
+        )
+    else:
+        notify_update_success(summary)

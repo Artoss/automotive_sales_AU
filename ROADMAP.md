@@ -16,6 +16,11 @@
 - [x] Fix Marklines current-year URL routing (current page covers current year; only fetch previous year)
 - [x] FCAI PDF incremental mode (`--mode incremental` skips unchanged files by hash comparison)
 - [x] Tests for update module, state sales extraction, and article classification (63 new tests)
+- [x] Slack notifications via webhook (no-op when `SLACK_WEBHOOK_URL` not set)
+- [x] Prefect flow integration (`prefect_flow.py` with cron scheduling, optional dependency)
+- [x] Data quality checks (totals cross-check, anomalous counts, state sum validation, duplicate articles)
+- [x] FCAI article HTML table fallback (extracts `<table>` elements when no images present)
+- [x] Tests for quality checks, notifications, and HTML table extraction (19 new tests, 123 total)
 
 ## Short-term
 
@@ -24,33 +29,6 @@ FCAI PDF incremental mode is implemented. Marklines could also skip re-parsing i
 
 ### Mock-based integration tests
 Current tests cover pure functions (parsing, classification, report models). Add mock-based tests that verify the update step orchestration (mock DB + HTTP, verify report counts and error handling).
-
-## Medium-term
-
-### Prefect flow integration
-`run_monthly_update()` returns a Pydantic `UpdateReport` by design. Wrap in a Prefect flow:
-- Schedule monthly run (e.g. 5th of each month)
-- Each step as a Prefect task for observability
-- Retry/alert on step failures
-- Store run artifacts in Prefect
-
-### Slack notifications
-Post `report.summary_text()` to a Slack channel after each update:
-- Success: summary with record counts and coverage
-- Failure: error details with step that failed
-- Coverage gap alerts when new gaps appear
-
-### Data quality checks
-Add validation between extraction and loading:
-- Flag months with unusually low/high record counts vs historical average
-- Cross-check Marklines totals against sum of make-level records
-- Detect duplicate or near-duplicate articles
-- Validate state sales sum against national total from same article
-
-### FCAI article image-free extraction
-Some newer FCAI articles have no embedded images (text-only releases). Investigate:
-- Whether table data is available in article HTML/text
-- Fallback extraction from article body when no images present
 
 ## Long-term
 
