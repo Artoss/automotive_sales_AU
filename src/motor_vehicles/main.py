@@ -821,6 +821,31 @@ def _run_export(config: AppConfig, source: str = "all", fmt: str = "csv") -> Non
             if rows:
                 datasets["fcai_sales"] = pd.DataFrame(rows)
 
+            with db.cursor() as cur:
+                cur.execute(
+                    "SELECT a.year, a.month, a.title, a.url, "
+                    "t.table_index, t.headers, t.row_data, "
+                    "t.extraction_method, t.confidence "
+                    "FROM fcai_article_extracted_tables t "
+                    "JOIN fcai_article_images i ON t.image_id = i.id "
+                    "JOIN fcai_articles a ON i.article_id = a.id "
+                    "ORDER BY a.year, a.month, t.table_index"
+                )
+                rows = cur.fetchall()
+            if rows:
+                datasets["fcai_extracted_tables"] = pd.DataFrame(rows)
+
+            with db.cursor() as cur:
+                cur.execute(
+                    "SELECT year, month, state_abbrev, state, units_sold, "
+                    "units_sold_prev_year, yoy_pct "
+                    "FROM fcai_state_sales "
+                    "ORDER BY year, month, state_abbrev"
+                )
+                rows = cur.fetchall()
+            if rows:
+                datasets["fcai_state_sales"] = pd.DataFrame(rows)
+
         if not datasets:
             click.echo("No data to export.")
             return
