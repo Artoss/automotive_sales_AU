@@ -100,19 +100,34 @@ class Database:
         status: str = "completed",
         records_count: int = 0,
         error_message: str | None = None,
+        content_hash: str | None = None,
     ) -> None:
         with self.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE scrape_runs
-                SET completed_at = NOW(),
-                    status = %s,
-                    records_count = %s,
-                    error_message = COALESCE(%s, error_message)
-                WHERE id = %s
-                """,
-                (status, records_count, error_message, run_id),
-            )
+            if content_hash:
+                cur.execute(
+                    """
+                    UPDATE scrape_runs
+                    SET completed_at = NOW(),
+                        status = %s,
+                        records_count = %s,
+                        error_message = COALESCE(%s, error_message),
+                        content_hash = %s
+                    WHERE id = %s
+                    """,
+                    (status, records_count, error_message, content_hash, run_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE scrape_runs
+                    SET completed_at = NOW(),
+                        status = %s,
+                        records_count = %s,
+                        error_message = COALESCE(%s, error_message)
+                    WHERE id = %s
+                    """,
+                    (status, records_count, error_message, run_id),
+                )
         logger.info("Finished scrape run #%d (status=%s)", run_id, status)
 
     def get_run_history(self, limit: int = 10) -> list[dict]:
@@ -501,6 +516,21 @@ class Database:
             if row:
                 return (row["year"], row["month"])
             return None
+
+    def get_last_content_hash(self, source: str) -> str | None:
+        """Return the content_hash from the most recent completed run for a source."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT content_hash FROM scrape_runs
+                WHERE source = %s AND status = 'completed'
+                  AND content_hash IS NOT NULL
+                ORDER BY completed_at DESC LIMIT 1
+                """,
+                (source,),
+            )
+            row = cur.fetchone()
+            return row["content_hash"] if row else None
 
     # --- Stats ---
 

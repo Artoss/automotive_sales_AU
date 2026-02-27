@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -43,6 +44,7 @@ class MarklinesStepReport(BaseModel):
     vehicle_type_records: int = 0
     commentary_records: int = 0
     total_records: int = 0
+    skipped_unchanged: bool = False
     errors: list[StepError] = Field(default_factory=list)
 
 
@@ -85,11 +87,15 @@ class UpdateReport(BaseModel):
         if self.marklines:
             m = self.marklines
             lines.append("--- Marklines ---")
-            lines.append(f"  Pages fetched:    {m.pages_fetched}")
-            lines.append(f"  Sales records:    {m.sales_records}")
-            lines.append(f"  Vehicle types:    {m.vehicle_type_records}")
-            lines.append(f"  Commentary:       {m.commentary_records}")
-            lines.append(f"  Total loaded:     {m.total_records}")
+            if m.skipped_unchanged:
+                lines.append(f"  Pages fetched:    {m.pages_fetched}")
+                lines.append("  Content unchanged, skipped parse/load")
+            else:
+                lines.append(f"  Pages fetched:    {m.pages_fetched}")
+                lines.append(f"  Sales records:    {m.sales_records}")
+                lines.append(f"  Vehicle types:    {m.vehicle_type_records}")
+                lines.append(f"  Commentary:       {m.commentary_records}")
+                lines.append(f"  Total loaded:     {m.total_records}")
             if m.errors:
                 for err in m.errors:
                     lines.append(f"  ERROR: {err.message}")
@@ -160,6 +166,15 @@ def compute_marklines_years(today: date | None = None) -> list[int]:
 # Step 1: Marklines
 # ---------------------------------------------------------------------------
 
+def _hash_pages(pages: dict[str, str]) -> str:
+    """Compute a deterministic hash of fetched page content."""
+    h = hashlib.sha256()
+    for url in sorted(pages):
+        h.update(url.encode())
+        h.update(pages[url].encode())
+    return h.hexdigest()
+
+
 def run_marklines_update(config: AppConfig) -> MarklinesStepReport:
     """Fetch current + previous year Marklines pages, parse, and load."""
     from motor_vehicles.scraping.marklines_client import MarklinesClient
@@ -176,7 +191,6 @@ def run_marklines_update(config: AppConfig) -> MarklinesStepReport:
     try:
         db.connect()
         db.ensure_schema("migrations")
-        run_id = db.start_run(source="marklines_update", config_hash=config.config_hash())
 
         pages: dict[str, str] = {}
 
@@ -204,6 +218,16 @@ def run_marklines_update(config: AppConfig) -> MarklinesStepReport:
 
         report.pages_fetched = len(pages)
 
+        # Incremental check: skip if content unchanged since last run
+        content_hash = _hash_pages(pages) if pages else ""
+        previous_hash = db.get_last_content_hash("marklines_update")
+        if content_hash and content_hash == previous_hash:
+            logger.info("Marklines content unchanged (hash=%s), skipping parse/load", content_hash[:12])
+            report.skipped_unchanged = True
+            return report
+
+        run_id = db.start_run(source="marklines_update", config_hash=config.config_hash())
+
         # Parse all fetched pages
         all_sales: list[dict] = []
         all_vtypes: list[dict] = []
@@ -228,7 +252,8 @@ def run_marklines_update(config: AppConfig) -> MarklinesStepReport:
             report.vehicle_type_records = len(all_vtypes)
             report.commentary_records = len(all_commentary)
             report.total_records = total
-            db.finish_run(run_id, status="completed", records_count=total)
+            db.finish_run(run_id, status="completed", records_count=total,
+                          content_hash=content_hash)
         except Exception as e:
             logger.error("Failed to load Marklines data: %s", e, exc_info=True)
             report.errors.append(StepError(

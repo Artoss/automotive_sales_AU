@@ -12,6 +12,7 @@ from motor_vehicles.update import (
     StateSalesStepReport,
     StepError,
     UpdateReport,
+    _hash_pages,
     compute_marklines_years,
 )
 
@@ -75,6 +76,10 @@ class TestReportModels:
         assert report.state_sales is None
         assert report.errors == []
 
+    def test_marklines_report_skipped_unchanged_default(self):
+        report = MarklinesStepReport()
+        assert report.skipped_unchanged is False
+
     def test_update_report_serialization(self):
         report = UpdateReport(
             timestamp="2026-01-15 10:00:00",
@@ -130,6 +135,17 @@ class TestSummaryText:
         text = report.summary_text()
         assert "Duration: 45.3s" in text
 
+    def test_skipped_unchanged_displayed(self):
+        report = UpdateReport(
+            timestamp="2026-01-15 10:00:00",
+            marklines=MarklinesStepReport(
+                pages_fetched=2, skipped_unchanged=True,
+            ),
+        )
+        text = report.summary_text()
+        assert "Content unchanged" in text
+        assert "Sales records" not in text
+
     def test_top_level_errors_displayed(self):
         report = UpdateReport(
             timestamp="2026-01-15 10:00:00",
@@ -138,3 +154,26 @@ class TestSummaryText:
         text = report.summary_text()
         assert "[state_sales] DB connection failed" in text
         assert "1 error(s)" in text
+
+
+class TestHashPages:
+    """Tests for _hash_pages content hashing."""
+
+    def test_deterministic(self):
+        pages = {"http://a.com": "<html>A</html>", "http://b.com": "<html>B</html>"}
+        assert _hash_pages(pages) == _hash_pages(pages)
+
+    def test_different_content_different_hash(self):
+        pages1 = {"http://a.com": "<html>A</html>"}
+        pages2 = {"http://a.com": "<html>B</html>"}
+        assert _hash_pages(pages1) != _hash_pages(pages2)
+
+    def test_order_independent(self):
+        pages_a = {"http://a.com": "A", "http://b.com": "B"}
+        pages_b = {"http://b.com": "B", "http://a.com": "A"}
+        assert _hash_pages(pages_a) == _hash_pages(pages_b)
+
+    def test_empty_pages(self):
+        h = _hash_pages({})
+        assert isinstance(h, str)
+        assert len(h) == 64  # SHA-256 hex digest

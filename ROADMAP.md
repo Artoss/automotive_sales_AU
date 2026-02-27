@@ -21,14 +21,13 @@
 - [x] Data quality checks (totals cross-check, anomalous counts, state sum validation, duplicate articles)
 - [x] FCAI article HTML table fallback (extracts `<table>` elements when no images present)
 - [x] Tests for quality checks, notifications, and HTML table extraction (19 new tests, 123 total)
+- [x] Marklines incremental mode (content hash comparison via `scrape_runs.content_hash` column, migration 006)
+- [x] Mock-based integration tests for update orchestration (20 tests covering all steps, error handling, skip logic)
+- [x] Database migrations (6 numbered SQL files)
 
 ## Short-term
 
-### Incremental mode for Marklines
-FCAI PDF incremental mode is implemented. Marklines could also skip re-parsing if page content hash matches previous run. Lower priority since Marklines pages are small and upserts are idempotent.
-
-### Mock-based integration tests
-Current tests cover pure functions (parsing, classification, report models). Add mock-based tests that verify the update step orchestration (mock DB + HTTP, verify report counts and error handling).
+_(All short-term items completed.)_
 
 ## Long-term
 
